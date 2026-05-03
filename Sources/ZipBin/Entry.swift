@@ -1,8 +1,8 @@
-import GitHub
+import Zip
 
 @main
 struct Entry {
     static func main() async {
-        await GhCommand.main()
+        await ZipCommand.main()
     }
 }

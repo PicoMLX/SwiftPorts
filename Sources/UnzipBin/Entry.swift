@@ -1,8 +1,8 @@
-import GitHub
+import Unzip
 
 @main
 struct Entry {
     static func main() async {
-        await GhCommand.main()
+        await UnzipCommand.main()
     }
 }
