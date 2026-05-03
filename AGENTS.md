@@ -15,7 +15,8 @@ liberally — every Swift command has a Go counterpart under
 `gh version`, `gh api`, `gh repo view`, `gh repo list`,
 `gh release list/view/download`, `gh issue list/view`, `gh pr list/view`,
 `gh search repos/code/commits/issues/prs`, `gh gist view/list`,
-`gh workflow list/view`, `gh run list/view`, `gh label list`.
+`gh workflow list/view`, `gh run list/view`, `gh label list`,
+`gh project list/view/item-list`.
 
 **Write commands shipped:**
 `gh issue create/comment/close/reopen`, `gh release create/delete`,
@@ -24,11 +25,18 @@ liberally — every Swift command has a Go counterpart under
 **Auth shipped:**
 `gh auth login` (OAuth device flow → Keychain),
 `gh auth logout`, `gh auth status` (GraphQL viewer{} probe with
-source disclosure: env vs keychain), `gh auth token`.
+source disclosure: env vs keychain vs hosts.yml), `gh auth token`.
+
+**Config shipped:**
+`gh config get/set/list` — reads/writes `~/.config/gh/config.yml`
+in upstream-gh's exact YAML format (interoperable: edits made by Go
+gh are read by SwiftGH and vice versa).
 
 **Foundation shipped:**
 - `ConfigurationResolver` with precedence
-  `GH_TOKEN > GITHUB_TOKEN > SecretStore[host]`.
+  `GH_TOKEN > GITHUB_TOKEN > SecretStore[host] > hosts.yml.oauth_token`.
+- `ConfigFile` + `HostsFile` (Yams-backed read+write,
+  upstream-gh-format-compatible). 0o600 file perms / 0o700 dir perms.
 - `GitClient` protocol; `ProcessGitClient` infers repo from
   `git remote get-url origin`. Used by `RepositoryResolver` so every
   `--repo`-taking command becomes optional.
@@ -39,31 +47,32 @@ source disclosure: env vs keychain), `gh auth token`.
 - `SecretStore` protocol; `KeychainSecretStore` (Apple), `InMemorySecretStore`.
 - `MinimalRepository` for trimmed list/search payloads.
 - `TTY` + `ANSI` helpers (NO_COLOR / CLICOLOR_FORCE honored).
+- `ProjectQueries` — canonical GraphQL queries as named constants;
+  `ProjectV2` + `ProjectV2Item` (polymorphic content via `__typename`).
 
-**Adopted (Apple/swiftlang):** `swift-argument-parser`, `swift-log`,
-`swift-http-types`, `swift-configuration` (+ YAML / CommandLineArguments
-traits), `swift-crypto`, `Security` framework.
+**Adopted (Apple/swiftlang/community):** `swift-argument-parser`,
+`swift-log`, `swift-http-types`, `swift-configuration` (+ YAML /
+CommandLineArguments traits), `swift-crypto`, `Yams` (YAML write
+side), `Security` framework.
 
 **Next, in roughly priority order:**
 1. **Git-aware writes.** `gh pr create` (head from current branch),
    `gh pr checkout`, `gh repo clone`, `gh repo fork --clone`. Add
-   `clone(url:dir:)` and `checkout(ref:)` to `GitClient`.
-2. **YAML config files.** Layer `~/.config/gh/config.yml` and
-   `~/.config/gh/hosts.yml` into `ConfigurationResolver` via
-   swift-configuration's `FileProvider<YAMLSnapshot>`. Add Yams for
-   the write side (`gh config set`, `gh auth login` host-write).
-3. **More REST coverage.** secret / variable / ssh-key / gpg-key /
+   `clone(url:dir:)`, `fetch(refspec:)`, `checkout(ref:)`,
+   `createBranch(name:)`, `push(remote:branch:)` to `GitClient`.
+2. **More REST coverage.** secret / variable / ssh-key / gpg-key /
    ruleset / cache. All additive.
-4. **GraphQL-only commands.** `gh project` family + advanced PR queries.
-5. **`gh repo create/clone/fork/delete`** — needs git integration for
-   the clone path.
-6. **`gh pr merge/comment/edit/review/diff/checks`** — straightforward
+3. **GraphQL writes.** `gh project field-list/item-add/item-edit/item-archive/item-delete`,
+   `gh issue develop`. Same client; just queries + mutations.
+4. **`gh repo create/delete/fork`** — pure REST except for the clone
+   path (needs item 1).
+5. **`gh pr merge/comment/edit/review/diff/checks`** — straightforward
    once PR write surface lands.
-7. **`gh release upload`** + `gh release delete-asset` — multipart
+6. **`gh release upload`** + `gh release delete-asset` — multipart
    uploads.
-8. **`gh browse`** — open URL in default browser
+7. **`gh browse`** — open URL in default browser
    (NSWorkspace / xdg-open / start).
-9. **TUI / interactive wizards** — lowest priority; non-interactive
+8. **TUI / interactive wizards** — lowest priority; non-interactive
    flags cover the same ground.
 
 **Skipped indefinitely:** `gh attestation` (Sigstore stack),
