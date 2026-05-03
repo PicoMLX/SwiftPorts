@@ -104,13 +104,18 @@ glab repo clone <repo> [dir] --https
 glab repo fork <repo>        --namespace, --name, --path, --json
 glab repo archive [<repo>]
 glab repo unarchive [<repo>]
+glab repo edit [<repo>]      --description, --default-branch, --visibility,
+                             --enable-issues / --disable-issues,
+                             --enable-mrs / --disable-mrs,
+                             --enable-wiki / --disable-wiki,
+                             --enable-snippets / --disable-snippets
+                             (toggles route through *_access_level fields)
 glab repo delete [<repo>]    -y/--yes to skip the confirmation prompt
                              (otherwise re-types the path to confirm)
 ```
 
-`repo clone` and `mr checkout` shell out via `ForgeKit.ProcessGitClient`
-to invoke the user's `git` binary — gives them their actual ssh-agent,
-credential helper, and config for free.
+`repo clone` and `mr checkout` route through `SwiftGit.GitClient`
+(libgit2 in-process) — no system `git` binary required.
 
 ### CI/CD surface
 
@@ -126,6 +131,8 @@ glab ci status                --repo, --branch, --poll-interval, --once
 glab ci retry [<id>]          --repo, --branch
 glab ci cancel [<id>]         --repo, --branch
 glab ci run                   --repo, --branch, -v KEY=VALUE (repeatable)
+glab ci lint [path|-]         POST /projects/:id/ci/lint of the file content
+                              (defaults to .gitlab-ci.yml; `-` reads stdin)
 ```
 
 `<id>` defaults to "latest pipeline for the resolved branch" everywhere.
@@ -136,6 +143,40 @@ a job name (matched against the latest pipeline's jobs).
 `ci status` and `ci trace` exit with code 1 when the underlying
 pipeline / job ends in `failed`, mirroring `gh run watch
 --exit-status`.
+
+### Release / tag / variable / label / api surface
+
+```
+glab release list             --repo, -l/--limit
+glab release view <tag>       --repo
+glab release create <tag>     --repo, --name, --ref,
+                              -n/--notes "...", -F/--notes-file <path|->
+glab release delete <tag>     --repo
+glab release download <tag>   --repo, -p/--pattern (repeatable, glob),
+                              -D/--dir <dir>, --sources
+                              downloads link assets (and optionally
+                              the auto-generated source archives)
+
+glab tag list                 --repo, -s/--search, -l/--limit
+glab tag create <tag> [<ref>] --repo, -m/--message (annotated tag)
+glab tag delete <tag>         --repo
+
+glab variable list            --repo, --show-values
+glab variable set <key> <v>   --repo, -p/--protected, -m/--masked,
+                              --raw, -t/--type (env_var|file),
+                              --scope <env>
+                              (`-` for value reads from stdin;
+                              tries PUT first, falls back to POST)
+glab variable unset <key>     --repo
+
+glab label list               --repo, -l/--limit, --json
+glab label create <name>      --repo, -c/--color (hex), -d/--description
+glab label delete <name>      --repo, -y/--yes
+
+glab api <endpoint>           -X/--method, -F/--field KEY=VAL (typed),
+                              -f/--raw-field KEY=VAL (string),
+                              -i/--include, --hostname
+```
 
 ### Auth surface
 
@@ -205,14 +246,14 @@ cwd remote.
   delete) is wired via the API. The terminal kanban TUI from upstream
   is not ported; `glab issue board view` with no ID opens the boards
   page in a browser, which gives you GitLab's full drag-and-drop UI.
-- **`glab ci config / lint / artifact / delete / get / trigger`** —
-  the rest of the CI surface beyond list/view/trace/status/retry/
-  cancel/run.
+- **`glab ci config / artifact / delete / get / trigger`** — the rest
+  of the CI surface beyond list / view / trace / status / retry /
+  cancel / run / lint.
 - **`glab schedule`** — pipeline schedules.
 - **`glab runner`** — runner administration.
-- **`glab release ...`**, `glab snippet ...`, `glab variable ...`,
-  `glab cluster ...`, `glab incident ...`, `glab token ...` — all
-  upstream surfaces beyond issues + auth + ci.
+- **`glab snippet ...`**, `glab cluster ...`, `glab incident ...`,
+  `glab token ...` — upstream surfaces we don't carry. (`release`,
+  `tag`, `variable`, `label`, `api` are now in.)
 
 ## Testing
 
