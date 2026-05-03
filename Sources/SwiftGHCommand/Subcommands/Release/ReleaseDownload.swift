@@ -32,7 +32,7 @@ struct ReleaseDownload: AsyncParsableCommand {
 
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
-        let client = APIClient()
+        let client = try await CommandContext.apiClient()
         let path = tag.map { "repos/\(target.slug)/releases/tags/\($0)" }
             ?? "repos/\(target.slug)/releases/latest"
         let release: Release = try await client.get(path)

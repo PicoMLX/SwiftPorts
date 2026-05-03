@@ -18,8 +18,7 @@ struct AuthToken: AsyncParsableCommand {
     var hostname: String?
 
     func run() async throws {
-        var config = Configuration.live()
-        if let hostname { config.host = hostname }
+        let config = try await CommandContext.resolveConfig(host: hostname)
         guard let token = config.token else {
             FileHandle.standardError.write(Data("no token configured\n".utf8))
             throw ExitCode(1)

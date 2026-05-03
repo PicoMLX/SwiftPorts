@@ -29,7 +29,7 @@ struct SearchRepos: AsyncParsableCommand {
         guard !query.isEmpty else {
             throw ValidationError("Provide a search query, e.g. 'gh search repos swift cli'")
         }
-        let client = APIClient()
+        let client = try await CommandContext.apiClient()
         let q = query.joined(separator: " ")
         var items: [URLQueryItem] = [
             URLQueryItem(name: "q", value: q),

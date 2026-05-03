@@ -17,27 +17,20 @@ struct AuthStatus: AsyncParsableCommand {
     var showToken: Bool = false
 
     func run() async throws {
-        var config = Configuration.live()
-        if let hostname { config.host = hostname }
+        let config = try await CommandContext.resolveConfig(host: hostname)
+        let source = TokenSource.detect(configToken: config.token)
 
         print("\(config.host)")
 
         guard let token = config.token else {
-            print("  X Not logged in. Set GH_TOKEN or GITHUB_TOKEN.")
+            print("  X Not logged in. Run `gh auth login` or set GH_TOKEN.")
             throw ExitCode(1)
         }
 
-        let source = ProcessInfo.processInfo.environment["GH_TOKEN"]?.isEmpty == false
-            ? "GH_TOKEN"
-            : "GITHUB_TOKEN"
-
-        // Probe via GraphQL viewer{} — a single round-trip that returns
-        // login + url and works for fine-grained PATs that may not have
-        // /user REST permission.
         let client = GraphQLClient(configuration: config)
         do {
             let result: ViewerQuery = try await client.query(ViewerQuery.query)
-            print("  ✓ Logged in to \(config.host) as \(result.viewer.login) (token from \(source))")
+            print("  ✓ Logged in to \(config.host) as \(result.viewer.login) (token from \(source.humanReadable))")
             print("    URL: \(result.viewer.url.absoluteString)")
             if showToken {
                 print("    Token: \(token)")
@@ -46,7 +39,7 @@ struct AuthStatus: AsyncParsableCommand {
             }
         } catch let APIError.unauthenticated(url) {
             print("  X Token rejected by \(url.absoluteString) (HTTP 401).")
-            print("    Source: \(source)")
+            print("    Source: \(source.humanReadable)")
             throw ExitCode(1)
         } catch {
             print("  X Auth probe failed: \(error.localizedDescription)")

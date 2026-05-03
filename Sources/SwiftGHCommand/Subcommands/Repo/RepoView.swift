@@ -16,7 +16,7 @@ struct RepoView: AsyncParsableCommand {
 
     func run() async throws {
         let target = try await RepositoryResolver.resolve(positional: repository)
-        let client = APIClient()
+        let client = try await CommandContext.apiClient()
         let repo: Repository = try await client.get("repos/\(target.slug)")
 
         if json {

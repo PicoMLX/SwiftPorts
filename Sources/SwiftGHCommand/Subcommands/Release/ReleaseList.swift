@@ -21,7 +21,7 @@ struct ReleaseList: AsyncParsableCommand {
 
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
-        let client = APIClient()
+        let client = try await CommandContext.apiClient()
         let perPage = min(limit, 100)
         let releases: [Release] = try await client.get(
             "repos/\(target.slug)/releases",

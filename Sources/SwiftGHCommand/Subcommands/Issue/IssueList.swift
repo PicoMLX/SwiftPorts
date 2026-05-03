@@ -34,7 +34,7 @@ struct IssueList: AsyncParsableCommand {
 
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
-        let client = APIClient()
+        let client = try await CommandContext.apiClient()
         let perPage = min(limit, 100)
         var query: [URLQueryItem] = [
             URLQueryItem(name: "state", value: state.rawValue),

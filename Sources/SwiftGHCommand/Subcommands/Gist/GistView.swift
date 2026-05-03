@@ -19,7 +19,7 @@ struct GistView: AsyncParsableCommand {
     var json: Bool = false
 
     func run() async throws {
-        let client = APIClient()
+        let client = try await CommandContext.apiClient()
         let gist: Gist = try await client.get("gists/\(id)")
 
         if json {

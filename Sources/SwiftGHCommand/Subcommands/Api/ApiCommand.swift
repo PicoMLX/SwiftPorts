@@ -45,9 +45,7 @@ struct ApiCommand: AsyncParsableCommand {
     var includeHeaders: Bool = false
 
     func run() async throws {
-        var config = Configuration.live()
-        if let h = hostname { config.host = h }
-        let client = APIClient(configuration: config)
+        let client = try await CommandContext.apiClient(host: hostname)
 
         let httpMethod = HTTPRequest.Method(method.uppercased())
             ?? HTTPRequest.Method(method)

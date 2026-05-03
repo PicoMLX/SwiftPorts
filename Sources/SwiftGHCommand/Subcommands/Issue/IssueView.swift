@@ -20,7 +20,7 @@ struct IssueView: AsyncParsableCommand {
 
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
-        let client = APIClient()
+        let client = try await CommandContext.apiClient()
         let issue: Issue = try await client.get(
             "repos/\(target.slug)/issues/\(number)")
 
