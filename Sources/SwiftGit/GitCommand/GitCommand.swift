@@ -48,6 +48,8 @@ public struct GitCommand: AsyncParsableCommand {
             Apply.self,
             Reflog.self,
             Describe.self,
+            LsTree.self,
+            CatFile.self,
         ]
     )
 

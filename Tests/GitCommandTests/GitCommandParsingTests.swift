@@ -790,4 +790,37 @@ struct GitCommandParsingTests {
         #expect(cmd.abbrev == 10)
         #expect(cmd.committish == "feature/x")
     }
+
+    @Test("ls-tree: defaults to HEAD, non-recursive")
+    func lsTreeDefaults() throws {
+        let cmd = try parse(["ls-tree"], as: LsTree.self)
+        #expect(cmd.treeish == "HEAD")
+        #expect(cmd.recursive == false)
+        #expect(cmd.nameOnly == false)
+    }
+
+    @Test("ls-tree: -r + --name-only + ref")
+    func lsTreeRecursive() throws {
+        let cmd = try parse(
+            ["ls-tree", "-r", "--name-only", "main"],
+            as: LsTree.self)
+        #expect(cmd.recursive == true)
+        #expect(cmd.nameOnly == true)
+        #expect(cmd.treeish == "main")
+    }
+
+    @Test("cat-file: -t HEAD")
+    func catFileType() throws {
+        let cmd = try parse(["cat-file", "-t", "HEAD"], as: CatFile.self)
+        #expect(cmd.typeOnly == true)
+        #expect(cmd.object == "HEAD")
+    }
+
+    @Test("cat-file: -p with SHA")
+    func catFilePretty() throws {
+        let cmd = try parse(
+            ["cat-file", "-p", "abc123"], as: CatFile.self)
+        #expect(cmd.pretty == true)
+        #expect(cmd.object == "abc123")
+    }
 }
