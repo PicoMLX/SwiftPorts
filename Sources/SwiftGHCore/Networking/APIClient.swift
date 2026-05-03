@@ -83,6 +83,48 @@ public actor APIClient {
         )
     }
 
+    /// Send an `Encodable` payload as a JSON body and decode the
+    /// response into `Response`. Used by every write command —
+    /// issues, releases, gists, etc.
+    public func send<Body: Encodable, Response: Decodable>(
+        method: HTTPRequest.Method,
+        path: String,
+        body: Body,
+        as responseType: Response.Type = Response.self
+    ) async throws -> Response {
+        let encoded = try JSONEncoder.gitHub().encode(body)
+        let response = try await perform(
+            method: method,
+            url: makeURL(path: path, query: []),
+            body: encoded
+        )
+        return try decode(Response.self, from: response)
+    }
+
+    /// Send an `Encodable` payload, ignore the response body.
+    /// Used by deletes / state-only patches.
+    public func send<Body: Encodable>(
+        method: HTTPRequest.Method,
+        path: String,
+        body: Body
+    ) async throws {
+        let encoded = try JSONEncoder.gitHub().encode(body)
+        _ = try await perform(
+            method: method,
+            url: makeURL(path: path, query: []),
+            body: encoded
+        )
+    }
+
+    /// `DELETE path` — body-less.
+    public func delete(_ path: String) async throws {
+        _ = try await perform(
+            method: .delete,
+            url: makeURL(path: path, query: []),
+            body: nil
+        )
+    }
+
     // MARK: URL building
 
     func makeURL(path: String, query: [URLQueryItem]) -> URL {
