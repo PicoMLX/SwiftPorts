@@ -67,7 +67,7 @@ struct WorkflowEnable: AsyncParsableCommand {
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
         let client = try await CommandContext.apiClient()
-        try await client.raw(
+        _ = try await client.raw(
             method: .put,
             path: "repos/\(target.slug)/actions/workflows/\(workflow)/enable")
         print("\(ANSI.green("✓")) Enabled \(workflow)")
@@ -85,7 +85,7 @@ struct WorkflowDisable: AsyncParsableCommand {
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
         let client = try await CommandContext.apiClient()
-        try await client.raw(
+        _ = try await client.raw(
             method: .put,
             path: "repos/\(target.slug)/actions/workflows/\(workflow)/disable")
         print("\(ANSI.green("✓")) Disabled \(workflow)")

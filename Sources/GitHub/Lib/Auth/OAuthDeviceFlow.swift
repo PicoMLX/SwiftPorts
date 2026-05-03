@@ -89,9 +89,9 @@ public actor OAuthDeviceFlow {
             try? await Task.sleep(for: .seconds(interval))
             do {
                 return try await exchangeOnce(deviceCode: deviceCode.deviceCode)
-            } catch let OAuthDeviceFlowError.authorizationPending {
+            } catch OAuthDeviceFlowError.authorizationPending {
                 continue
-            } catch let OAuthDeviceFlowError.slowDown {
+            } catch OAuthDeviceFlowError.slowDown {
                 // Server asked us to back off; bump interval per spec.
                 interval += 5
                 continue

@@ -14,7 +14,7 @@ struct RunCancel: AsyncParsableCommand {
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
         let client = try await CommandContext.apiClient()
-        try await client.raw(
+        _ = try await client.raw(
             method: .post,
             path: "repos/\(target.slug)/actions/runs/\(id)/cancel")
         print("\(ANSI.green("✓")) Cancelled run \(id)")
@@ -36,7 +36,7 @@ struct RunRerun: AsyncParsableCommand {
         let target = try await RepositoryResolver.resolve(flag: repo)
         let client = try await CommandContext.apiClient()
         let suffix = failedOnly ? "/rerun-failed-jobs" : "/rerun"
-        try await client.raw(
+        _ = try await client.raw(
             method: .post,
             path: "repos/\(target.slug)/actions/runs/\(id)\(suffix)")
         print("\(ANSI.green("✓")) Re-queued run \(id)\(failedOnly ? " (failed jobs only)" : "")")

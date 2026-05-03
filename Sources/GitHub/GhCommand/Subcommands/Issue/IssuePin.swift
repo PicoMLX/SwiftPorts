@@ -20,7 +20,7 @@ struct IssuePin: AsyncParsableCommand {
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
         let client = try await CommandContext.apiClient()
-        try await client.raw(
+        _ = try await client.raw(
             method: .put,
             path: "repos/\(target.slug)/issues/\(number)/pin")
         print("\(ANSI.green("✓")) Pinned #\(number)")
