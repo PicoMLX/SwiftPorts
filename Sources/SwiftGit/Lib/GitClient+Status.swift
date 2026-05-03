@@ -61,6 +61,14 @@ public struct StatusReport: Sendable {
     /// True when the repo has no commits yet (HEAD points at an
     /// unborn ref). Real git's verbose output adds "No commits yet".
     public let isUnborn: Bool
+    /// Upstream tracking ref (e.g. `origin/main`), nil when the
+    /// branch has no configured upstream.
+    public let upstreamRef: String?
+    /// Ahead / behind counts vs `upstreamRef`, nil when there's no
+    /// upstream to compare against. Used for the `## main...origin/main
+    /// [ahead 2, behind 1]` line in `--branch` output.
+    public let ahead: Int?
+    public let behind: Int?
     public let entries: [StatusEntry]
 
     public var stagedEntries:  [StatusEntry] { entries.filter { $0.indexState != .unchanged && !$0.isConflicted } }
@@ -130,9 +138,63 @@ extension GitClient {
                 try check(headRC)
             }
 
+            // Upstream tracking + ahead/behind counts. Best-effort —
+            // missing upstream just leaves the fields nil.
+            var upstreamRef: String? = nil
+            var ahead: Int? = nil
+            var behind: Int? = nil
+            if let branch = branchName, !isUnborn {
+                upstreamRef = (try? upstreamShorthand(repo: repo, branch: branch))
+                if upstreamRef != nil {
+                    let counts = try? graphCounts(
+                        repo: repo, branch: branch)
+                    ahead = counts?.ahead
+                    behind = counts?.behind
+                }
+            }
+
             return StatusReport(
-                branchName: branchName, isUnborn: isUnborn, entries: entries)
+                branchName: branchName, isUnborn: isUnborn,
+                upstreamRef: upstreamRef, ahead: ahead, behind: behind,
+                entries: entries)
         }
+    }
+
+    private func upstreamShorthand(repo: OpaquePointer?, branch: String) throws -> String? {
+        var buf = git_buf()
+        let rc = branch.withCString { name -> Int32 in
+            "refs/heads/\(branch)".withCString { full in
+                git_branch_upstream_name(&buf, repo, full)
+            }
+            _ = name
+            return git_branch_upstream_name(&buf, repo, "refs/heads/\(branch)")
+        }
+        if rc != 0 { return nil }
+        defer { git_buf_dispose(&buf) }
+        guard let ptr = buf.ptr else { return nil }
+        let full = String(cString: ptr)
+        let prefix = "refs/remotes/"
+        return full.hasPrefix(prefix) ? String(full.dropFirst(prefix.count)) : full
+    }
+
+    private func graphCounts(repo: OpaquePointer?, branch: String) throws -> (ahead: Int, behind: Int)? {
+        var localRef: OpaquePointer?
+        let lrc = git_branch_lookup(&localRef, repo, branch, GIT_BRANCH_LOCAL)
+        if lrc != 0 { return nil }
+        defer { git_reference_free(localRef) }
+        guard let localOID = git_reference_target(localRef) else { return nil }
+
+        var upstreamRef: OpaquePointer?
+        let urc = git_branch_upstream(&upstreamRef, localRef)
+        if urc != 0 { return nil }
+        defer { git_reference_free(upstreamRef) }
+        guard let upstreamOID = git_reference_target(upstreamRef) else { return nil }
+
+        var ahead: Int = 0
+        var behind: Int = 0
+        let rc = git_graph_ahead_behind(&ahead, &behind, repo, localOID, upstreamOID)
+        if rc != 0 { return nil }
+        return (ahead, behind)
     }
 
     /// Translate one `git_status_entry` into our `StatusEntry`.
@@ -182,15 +244,37 @@ extension GitClient {
 
 extension StatusReport {
 
+    /// `[ahead N, behind M]` parts as real git formats them. Empty
+    /// array when both counts are zero / nil.
+    private func aheadBehindParts() -> [String] {
+        var parts: [String] = []
+        if let a = ahead, a > 0 { parts.append("ahead \(a)") }
+        if let b = behind, b > 0 { parts.append("behind \(b)") }
+        return parts
+    }
+
     /// Real-git's `--short` / `--porcelain` format: `XY <path>` per
-    /// entry. With `branchHeader: true`, prepend a `## <branch>` line.
+    /// entry. With `branchHeader: true`, prepend a `## <branch>` line
+    /// (with `...<upstream> [ahead N, behind M]` when an upstream
+    /// is configured).
     public func shortFormat(branchHeader: Bool = false) -> String {
         var out = ""
         if branchHeader {
             if isUnborn {
                 out += "## No commits yet on \(branchName ?? "HEAD")\n"
+            } else if let branch = branchName {
+                if let upstream = upstreamRef {
+                    var line = "## \(branch)...\(upstream)"
+                    let parts = aheadBehindParts()
+                    if !parts.isEmpty {
+                        line += " [\(parts.joined(separator: ", "))]"
+                    }
+                    out += line + "\n"
+                } else {
+                    out += "## \(branch)\n"
+                }
             } else {
-                out += "## \(branchName ?? "HEAD (no branch)")\n"
+                out += "## HEAD (no branch)\n"
             }
         }
         for e in entries {
@@ -217,6 +301,23 @@ extension StatusReport {
         if isUnborn {
             // Real git: blank line on either side of `No commits yet`.
             out += "\nNo commits yet\n\n"
+        } else if let upstream = upstreamRef {
+            // Real git's "Your branch is …" line.
+            switch (ahead ?? 0, behind ?? 0) {
+            case (0, 0):
+                out += "Your branch is up to date with '\(upstream)'.\n\n"
+            case (let a, 0) where a > 0:
+                out += "Your branch is ahead of '\(upstream)' by \(a) commit\(a == 1 ? "" : "s").\n"
+                out += "  (use \"git push\" to publish your local commits)\n\n"
+            case (0, let b) where b > 0:
+                out += "Your branch is behind '\(upstream)' by \(b) commit\(b == 1 ? "" : "s"), and can be fast-forwarded.\n"
+                out += "  (use \"git pull\" to update your local branch)\n\n"
+            case (let a, let b) where a > 0 && b > 0:
+                out += "Your branch and '\(upstream)' have diverged,\nand have \(a) and \(b) different commits each, respectively.\n"
+                out += "  (use \"git pull\" if you want to integrate the remote branch with yours)\n\n"
+            default:
+                break
+            }
         }
 
         let staged = stagedEntries
