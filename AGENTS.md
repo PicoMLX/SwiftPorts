@@ -17,7 +17,7 @@ history, and one test runner.
 | `GitLab`       | —      | GitLab SDK: REST API client (`X-Next-Page` pagination, Bearer auth, `gitlab.com` and self-hosted instances), Codable models, `RepositoryReference` with nested-subgroup support. No ArgumentParser dependency. |
 | `GlabCommand`  | `glab` | The `glab` subcommand tree — built on top of `GitLab` + `ForgeKit`. Today: `issue list / view / create / close / reopen / note / subscribe / unsubscribe / delete`. |
 | `SwiftGit`     | —      | In-process `GitClient` impl backed by libgit2 1.9.x (vendored from `ibrahimcetin/libgit2` SwiftPM package). Drop-in replacement for `ForgeKit`'s `ProcessGitClient` — no system `git` binary required. HTTPS auth via `CredentialProvider` callback. Named `SwiftGit` (not `Git`) so its build artifacts don't case-fold-collide with the lowercase `git` exec on macOS. |
-| `GitCommand`   | `git`  | The `git` subcommand tree — `clone / fetch / pull {--rebase} / checkout / push / add / commit / merge {--ff,--no-ff,--ff-only} / rebase {<upstream>,--continue,--skip,--abort,--onto} / diff / stash {push,list,apply,pop,drop,clear,show,branch} / remote add / remote get-url / branch / version`. Output and exit-code semantics mirror real git for every supported case. SwiftBash can register `GitCommand` as the `git` builtin to shadow system git. |
+| `GitCommand`   | `git`  | The `git` subcommand tree — `clone / fetch / pull {--rebase} / checkout {-b/-B/--/<ref> --} / push / add / reset {--soft,--mixed,--hard,-- <paths>} / status {-s,--porcelain,-b} / commit / merge {--ff,--no-ff,--ff-only} / rebase {<upstream>,--continue,--skip,--abort,--onto} / cherry-pick {<commit>,--continue,--skip,--abort} / diff / log {--oneline,--format,--stat,-p,-<n>,<a>..<b>,-- <paths>} / show / rev-parse {--short,--abbrev-ref,--git-dir,--show-toplevel,--is-inside-work-tree} / mv / rm {--cached} / stash {push,list,apply,pop,drop,clear,show,branch} / tag {-a -m, -d, -l, -n, -f} / remote add / remote get-url / branch {-d, -D, -m, -M, --show-current} / version`. Output and exit-code semantics mirror real git for every supported case. SwiftBash can register `GitCommand` as the `git` builtin to shadow system git. |
 
 ## Build, test, run
 
@@ -33,6 +33,24 @@ swift run unzip ...                      # unzip(1)
 
 `swift build -c release` produces optimized binaries under
 `.build/release/`.
+
+## CI
+
+GitHub Actions workflow at `.github/workflows/swift.yml` runs on push
+to `main` and PRs. Matrix:
+
+- **macOS** — `macos-15` runner, `swift build && swift test`
+- **iOS Simulator** — same runner, `xcodebuild` against the auto-generated
+  `SwiftPorts-Package` umbrella scheme
+- **Linux** — `swift:6.0-jammy` Docker image
+- **Windows** — `windows-latest` + `SwiftyLab/setup-swift`
+  (`continue-on-error` until libgit2 builds cleanly there)
+- **Android** — `skiptools/swift-android-action`
+  (`continue-on-error`, same caveat)
+
+The Windows + Android jobs are stretch goals — `ibrahimcetin/libgit2`
+1.9.x doesn't advertise official support and the C build path needs
+platform-specific defines we haven't tuned yet.
 
 ## Layout — umbrella convention
 

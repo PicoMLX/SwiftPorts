@@ -18,7 +18,7 @@ enum RepositoryResolver {
     static func resolve(
         flag: RepositoryReference? = nil,
         positional: RepositoryReference? = nil,
-        gitClient: any GitClient = ProcessGitClient(),
+        gitClient: any ForgeKit.GitClient = CommandContext.gitClient(),
         hasCredentialsForHost: (String) async -> Bool = { _ in true }
     ) async throws -> RepositoryReference {
         if let positional {
@@ -43,7 +43,7 @@ enum RepositoryResolver {
     /// self-hosted GitLab without `--hostname` or `GITLAB_HOST`.
     private static func attachInferredHost(
         _ ref: RepositoryReference,
-        gitClient: any GitClient,
+        gitClient: any ForgeKit.GitClient,
         hasCredentialsForHost: (String) async -> Bool
     ) async -> RepositoryReference {
         guard ref.host == nil,

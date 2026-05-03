@@ -30,7 +30,7 @@ struct CiTrace: AsyncParsableCommand {
     func run() async throws {
         let target = try await CommandContext.resolveRepo(flag: repo)
         let client = try await CommandContext.apiClient(host: target.host)
-        let gitClient: any GitClient = ProcessGitClient()
+        let gitClient: any ForgeKit.GitClient = CommandContext.gitClient()
 
         var current = try await CiSupport.resolveJob(
             argument: job, repo: target, client: client,

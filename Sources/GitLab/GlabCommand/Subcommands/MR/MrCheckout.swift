@@ -35,7 +35,7 @@ struct MrCheckout: AsyncParsableCommand {
         let mrRef = "refs/merge-requests/\(merge.iid)/head"
         let refspec = "\(mrRef):\(local)"
 
-        let git: any GitClient = ProcessGitClient()
+        let git: any ForgeKit.GitClient = CommandContext.gitClient()
         print("Fetching \(remote) \(refspec) …")
         try await git.fetch(remote: remote, refspec: refspec)
         print("Checking out \(local) …")

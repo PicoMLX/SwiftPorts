@@ -1,0 +1,115 @@
+import Foundation
+import Testing
+import ForgeKit
+@testable import SwiftGit
+
+@Suite("GitClient.checkout (-b / -- paths)")
+struct GitClientCheckoutTests {
+
+    private func makeRepo() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CheckoutTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try runGit(["init", "-b", "main"], in: dir)
+        try runGit(["config", "user.email", "t@e.com"], in: dir)
+        try runGit(["config", "user.name", "T"], in: dir)
+        try Data("v1\n".utf8).write(to: dir.appendingPathComponent("a.txt"))
+        try runGit(["add", "."], in: dir)
+        try runGit(["commit", "-m", "init"], in: dir)
+        return dir
+    }
+
+    @discardableResult
+    private func runGit(_ args: [String], in dir: URL) throws -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["git"] + args
+        p.currentDirectoryURL = dir
+        let out = Pipe(); let err = Pipe()
+        p.standardOutput = out; p.standardError = err
+        try p.run()
+        p.waitUntilExit()
+        let outStr = String(decoding: (try? out.fileHandleForReading.readToEnd()) ?? Data(),
+                            as: UTF8.self)
+        if p.terminationStatus != 0 {
+            let errStr = String(decoding: (try? err.fileHandleForReading.readToEnd()) ?? Data(),
+                                as: UTF8.self)
+            throw Failure("git \(args.joined(separator: " ")) failed: \(errStr)")
+        }
+        return outStr
+    }
+
+    private struct Failure: Error, CustomStringConvertible {
+        let message: String; init(_ m: String) { self.message = m }
+        var description: String { message }
+    }
+
+    @Test("-b creates a new branch and switches HEAD to it")
+    func newBranch() async throws {
+        let dir = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let client = SwiftGit.GitClient(workingDirectory: dir)
+        let outcome = try await client.checkoutNewBranch(name: "feat")
+        guard case .createdNew(let n) = outcome, n == "feat" else {
+            Issue.record("expected createdNew, got \(outcome)"); return
+        }
+
+        let current = try await client.currentBranch()
+        #expect(current == "feat")
+        // Listed by `localBranches` too.
+        let names = try client.localBranches().sorted()
+        #expect(names == ["feat", "main"])
+    }
+
+    @Test("-b on an existing branch errors")
+    func newBranchDuplicateRejected() async throws {
+        let dir = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let client = SwiftGit.GitClient(workingDirectory: dir)
+        _ = try await client.checkoutNewBranch(name: "feat")
+        try await client.checkout(ref: "main")
+        await #expect(throws: Libgit2Error.self) {
+            _ = try await client.checkoutNewBranch(name: "feat")
+        }
+    }
+
+    @Test("-B force-resets an existing branch")
+    func forceResetExisting() async throws {
+        let dir = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let client = SwiftGit.GitClient(workingDirectory: dir)
+        _ = try await client.checkoutNewBranch(name: "feat")
+        try await client.checkout(ref: "main")
+        let outcome = try await client.checkoutNewBranch(name: "feat", force: true)
+        guard case .resetExisting = outcome else {
+            Issue.record("expected resetExisting, got \(outcome)"); return
+        }
+    }
+
+    @Test("checkoutPaths restores working tree from index")
+    func restoreFromIndex() async throws {
+        let dir = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("modified\n".utf8).write(to: dir.appendingPathComponent("a.txt"))
+        try await SwiftGit.GitClient(workingDirectory: dir).checkoutPaths(["a.txt"])
+        let body = try Data(contentsOf: dir.appendingPathComponent("a.txt"))
+        #expect(String(decoding: body, as: UTF8.self) == "v1\n")
+    }
+
+    @Test("checkoutPaths(from:) restores working tree from a ref's tree")
+    func restoreFromRef() async throws {
+        let dir = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Commit v2 so we have a ref to pull v2 back from later.
+        try Data("v2\n".utf8).write(to: dir.appendingPathComponent("a.txt"))
+        try runGit(["add", "."], in: dir)
+        try runGit(["commit", "-m", "v2"], in: dir)
+
+        // Restore a.txt to its v1 (HEAD~1) tree state.
+        try await SwiftGit.GitClient(workingDirectory: dir)
+            .checkoutPaths(["a.txt"], from: "HEAD~1")
+        let body = try Data(contentsOf: dir.appendingPathComponent("a.txt"))
+        #expect(String(decoding: body, as: UTF8.self) == "v1\n")
+    }
+}

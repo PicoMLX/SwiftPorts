@@ -189,6 +189,7 @@ let package = Package(
             dependencies: [
                 "GitLab",
                 "ForgeKit",
+                "SwiftGit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/GitLab/GlabCommand"

@@ -1,0 +1,118 @@
+---
+name: Swift
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Cancel earlier runs of this workflow on the same branch as soon as
+# a new commit comes in. SwiftPM checkouts of libgit2 are slow on
+# fresh runners, so stacking runs wastes capacity.
+concurrency:
+  group: swift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  build-macos:
+    # macos-15 satisfies our `.macOS(.v15)` package floor and ships
+    # Xcode 16+, which builds libgit2 1.9.x cleanly via the
+    # ibrahimcetin/libgit2 SwiftPM package's CommonCrypto path.
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Swift version
+        run: swift --version
+      - name: Build (macOS)
+        run: swift build --build-tests -v
+      - name: Test (macOS)
+        run: swift test -v --skip-build
+
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      # iOS 18 simulator runtime isn't always preinstalled — ensure
+      # it's available so xcodebuild can find a matching destination.
+      - name: Install iOS Simulator runtime
+        run: sudo xcodebuild -downloadPlatform iOS
+      # Auto-generated `<Package>-Package` umbrella scheme covers all
+      # our library targets. Executables (`gh`, `glab`, `git`, `zip`,
+      # `unzip`) build at the SwiftPM-level and are ineligible for the
+      # iOS destination — that's expected.
+      - name: Build (iOS Simulator)
+        run: |
+          xcodebuild build \
+            -scheme SwiftPorts-Package \
+            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 15' \
+            -skipPackagePluginValidation
+      - name: Test (iOS Simulator)
+        run: |
+          xcodebuild test \
+            -scheme SwiftPorts-Package \
+            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 15' \
+            -skipPackagePluginValidation
+
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    container:
+      image: swift:6.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+      # libgit2 needs a few system libs on Linux: zlib (transitively
+      # used despite our builtin compression), pkg-config for OpenSSL
+      # detection, and ca-certificates for HTTPS clones in tests.
+      - name: Install C dependencies
+        run: |
+          apt-get update
+          apt-get install -y libssl-dev pkg-config zlib1g-dev ca-certificates
+      - name: Verify Swift version
+        run: swift --version
+      - name: Build (Linux)
+        run: swift build --build-tests -v
+      - name: Test (Linux)
+        run: swift test -v --skip-build
+
+  # Stretch goals — libgit2 1.9.x via ibrahimcetin/libgit2 doesn't
+  # advertise official Windows / Android support, so these jobs are
+  # `continue-on-error` until we either get them building or
+  # explicitly drop them. The signal is still useful: if either
+  # passes, we know our code itself is portable.
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: "6.0.3"
+      - name: Verify Swift version
+        run: swift --version
+      - name: Build (Windows)
+        run: swift build --build-tests -v
+      - name: Test (Windows)
+        run: swift test -v --skip-build
+
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & test (Android emulator)
+        uses: skiptools/swift-android-action@v2
+        with:
+          swift-version: "6.0"
+          # SDK + NDK + emulator pushes past the default runner's
+          # ~14 GiB free. Free up disk first.
+          free-disk-space: true

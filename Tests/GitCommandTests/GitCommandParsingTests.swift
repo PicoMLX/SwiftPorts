@@ -47,7 +47,9 @@ struct GitCommandParsingTests {
     @Test("checkout: ref")
     func checkout() throws {
         let cmd = try parse(["checkout", "feature/x"], as: Checkout.self)
-        #expect(cmd.ref == "feature/x")
+        let split = Checkout.split(cmd.rest)
+        #expect(split.refs == ["feature/x"])
+        #expect(split.paths.isEmpty)
     }
 
     @Test("push: bare refspec defaults to origin")
@@ -451,6 +453,190 @@ struct GitCommandParsingTests {
         #expect(throws: (any Error).self) {
             _ = try GitCommand.parseAsRoot(["pull", "--rebase", "--no-ff"])
         }
+    }
+
+    @Test("reset: --soft <commit>")
+    func resetSoftParse() throws {
+        let cmd = try parse(["reset", "--soft", "HEAD~1"], as: Reset.self)
+        #expect(cmd.soft == true)
+        #expect(cmd.rest == ["HEAD~1"])
+        let split = Reset.split(cmd.rest)
+        #expect(split.commit == "HEAD~1")
+        #expect(split.paths.isEmpty)
+    }
+
+    @Test("reset: -- <paths> (per-path form)")
+    func resetPerPathParse() throws {
+        let cmd = try parse(
+            ["reset", "HEAD", "--", "a.txt", "b.txt"], as: Reset.self)
+        let split = Reset.split(cmd.rest)
+        #expect(split.commit == "HEAD")
+        #expect(split.paths == ["a.txt", "b.txt"])
+    }
+
+    @Test("reset: --soft / --hard mutually exclusive")
+    func resetModeMutex() {
+        #expect(throws: (any Error).self) {
+            _ = try GitCommand.parseAsRoot(["reset", "--soft", "--hard", "HEAD"])
+        }
+    }
+
+    @Test("checkout: -b <name>")
+    func checkoutNewBranchParse() throws {
+        let cmd = try parse(["checkout", "-b", "feature"], as: Checkout.self)
+        #expect(cmd.newBranch == "feature")
+        #expect(cmd.forceBranch == nil)
+    }
+
+    @Test("checkout: -B <name>")
+    func checkoutForceBranchParse() throws {
+        let cmd = try parse(["checkout", "-B", "feature"], as: Checkout.self)
+        #expect(cmd.forceBranch == "feature")
+        #expect(cmd.newBranch == nil)
+    }
+
+    @Test("checkout: -b + start-point")
+    func checkoutNewBranchWithStartPoint() throws {
+        let cmd = try parse(
+            ["checkout", "-b", "feat", "main"], as: Checkout.self)
+        #expect(cmd.newBranch == "feat")
+        let split = Checkout.split(cmd.rest)
+        #expect(split.refs == ["main"])
+    }
+
+    @Test("checkout: -- <paths>")
+    func checkoutPathsParse() throws {
+        let cmd = try parse(
+            ["checkout", "--", "a.txt", "b.txt"], as: Checkout.self)
+        let split = Checkout.split(cmd.rest)
+        #expect(split.refs.isEmpty)
+        #expect(split.paths == ["a.txt", "b.txt"])
+    }
+
+    @Test("checkout: <ref> -- <paths>")
+    func checkoutRefAndPathsParse() throws {
+        let cmd = try parse(
+            ["checkout", "main", "--", "a.txt"], as: Checkout.self)
+        let split = Checkout.split(cmd.rest)
+        #expect(split.refs == ["main"])
+        #expect(split.paths == ["a.txt"])
+    }
+
+    @Test("checkout: -b and -B mutually exclusive")
+    func checkoutBranchFlagsMutex() {
+        #expect(throws: (any Error).self) {
+            _ = try GitCommand.parseAsRoot(["checkout", "-b", "x", "-B", "y"])
+        }
+    }
+
+    @Test("cherry-pick: <commit>")
+    func cherryPickCommitParse() throws {
+        let cmd = try parse(["cherry-pick", "HEAD~1"], as: CherryPick.self)
+        #expect(cmd.commit == "HEAD~1")
+    }
+
+    @Test("cherry-pick: --continue / --abort / --skip mutually exclusive")
+    func cherryPickResumeMutex() {
+        #expect(throws: (any Error).self) {
+            _ = try GitCommand.parseAsRoot(
+                ["cherry-pick", "--continue", "--abort"])
+        }
+    }
+
+    @Test("cherry-pick: bare invocation rejected (needs <commit>)")
+    func cherryPickBareRejected() {
+        #expect(throws: (any Error).self) {
+            _ = try GitCommand.parseAsRoot(["cherry-pick"])
+        }
+    }
+
+    @Test("cherry-pick: --abort + commit rejected")
+    func cherryPickAbortWithCommit() {
+        #expect(throws: (any Error).self) {
+            _ = try GitCommand.parseAsRoot(["cherry-pick", "--abort", "HEAD"])
+        }
+    }
+
+    @Test("status: bare invocation parses cleanly")
+    func statusBare() throws {
+        let cmd = try parse(["status"], as: Status.self)
+        #expect(cmd.short == false)
+        #expect(cmd.porcelain == false)
+        #expect(cmd.branch == false)
+    }
+
+    @Test("status: -s / --short flag")
+    func statusShortFlag() throws {
+        #expect(try parse(["status", "-s"], as: Status.self).short == true)
+        #expect(try parse(["status", "--short"], as: Status.self).short == true)
+    }
+
+    @Test("status: --porcelain flag")
+    func statusPorcelainFlag() throws {
+        let cmd = try parse(["status", "--porcelain"], as: Status.self)
+        #expect(cmd.porcelain == true)
+    }
+
+    @Test("status: -b / --branch flag")
+    func statusBranchFlag() throws {
+        #expect(try parse(["status", "-b"], as: Status.self).branch == true)
+        #expect(try parse(["status", "--branch"], as: Status.self).branch == true)
+    }
+
+    @Test("status: -sb combined flags")
+    func statusCombinedFlags() throws {
+        let cmd = try parse(["status", "-sb"], as: Status.self)
+        #expect(cmd.short == true)
+        #expect(cmd.branch == true)
+    }
+
+    @Test("log: bare invocation parses cleanly")
+    func logBare() throws {
+        let cmd = try parse(["log"], as: Log.self)
+        #expect(cmd.oneline == false)
+        #expect(cmd.maxCount == nil)
+        #expect(cmd.rest.isEmpty)
+    }
+
+    @Test("log: --oneline + -n 3")
+    func logOnelineLimit() throws {
+        let cmd = try parse(["log", "--oneline", "-n", "3"], as: Log.self)
+        #expect(cmd.oneline == true)
+        #expect(cmd.maxCount == 3)
+    }
+
+    @Test("log: --format passes through")
+    func logFormatParse() throws {
+        let cmd = try parse(["log", "--format", "%H%n%s"], as: Log.self)
+        #expect(cmd.format == "%H%n%s")
+    }
+
+    @Test("log: --stat + -p flags")
+    func logStatPatch() throws {
+        #expect(try parse(["log", "--stat"], as: Log.self).stat == true)
+        #expect(try parse(["log", "-p"], as: Log.self).patch == true)
+        #expect(try parse(["log", "--patch"], as: Log.self).patch == true)
+    }
+
+    @Test("log: range expands to (starts, excludes)")
+    func logRangeExpansion() throws {
+        let (starts, excludes) = try Log.expandRefs(["HEAD~3..HEAD"])
+        #expect(starts == ["HEAD"])
+        #expect(excludes == ["HEAD~3"])
+    }
+
+    @Test("log: ^<ref> form excludes")
+    func logCaretExclude() throws {
+        let (starts, excludes) = try Log.expandRefs(["HEAD", "^main"])
+        #expect(starts == ["HEAD"])
+        #expect(excludes == ["main"])
+    }
+
+    @Test("log: -- splits refs from paths")
+    func logSplitOnDoubleDash() throws {
+        let (refs, paths) = Log.splitOnDoubleDash(["HEAD", "--", "a.txt"])
+        #expect(refs == ["HEAD"])
+        #expect(paths == ["a.txt"])
     }
 
     @Test("missing subcommand exits non-zero")

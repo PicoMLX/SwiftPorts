@@ -26,19 +26,31 @@ struct Entry {
     }
 
     /// Split git's attached short-option-with-value forms into separate
-    /// tokens so ArgumentParser can parse them. Today: `-U<n>` →
-    /// `-U <n>`. Add more shorts here if needed.
+    /// tokens so ArgumentParser can parse them.
+    /// - `-U<n>` → `-U <n>` (diff context lines)
+    /// - `-<n>` → `-n <n>` (log count limit) — only for the `log`
+    ///   subcommand, since `-1` etc. aren't generic git shorthand.
     static func preprocess(_ args: [String]) -> [String] {
         var out: [String] = []
         out.reserveCapacity(args.count)
+        let isLog = args.first == "log"
         for arg in args {
             if arg.count > 2, arg.hasPrefix("-U"),
                arg.dropFirst(2).allSatisfy(\.isNumber) {
                 out.append("-U")
                 out.append(String(arg.dropFirst(2)))
-            } else {
-                out.append(arg)
+                continue
             }
+            // For `git log`, accept real-git's `-<n>` shorthand as
+            // `-n <n>`. Don't apply globally — `-1` could be a valid
+            // negative-int positional in another subcommand.
+            if isLog, arg.count > 1, arg.hasPrefix("-"),
+               arg.dropFirst().allSatisfy(\.isNumber) {
+                out.append("-n")
+                out.append(String(arg.dropFirst()))
+                continue
+            }
+            out.append(arg)
         }
         return out
     }

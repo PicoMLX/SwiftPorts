@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 
 struct StashPop: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -26,7 +27,10 @@ struct StashPop: AsyncParsableCommand {
         }
 
         try await client.stashPop(index: idx, reinstateIndex: reinstateIndex)
-        // `Dropped stash@{N} (<sha>)` matches real-git's tail line.
+        // Real git's `pop` prints the verbose status block first, then
+        // the `Dropped stash@{N}` tail.
+        let report = try await client.status()
+        FileHandle.standardOutput.write(Data(report.verboseFormat().utf8))
         print("Dropped stash@{\(idx)} (\(target.sha))")
     }
 }

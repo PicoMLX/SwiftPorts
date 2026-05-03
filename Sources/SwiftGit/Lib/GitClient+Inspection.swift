@@ -92,4 +92,81 @@ extension GitClient {
         try check(rc)
         return false
     }
+
+    /// Delete a local branch. Equivalent to `git branch -d <name>`
+    /// (or `-D` with `force`).
+    public func branchDelete(name: String, force: Bool = false) async throws {
+        try withRepository { repo in
+            var ref: OpaquePointer?
+            let lookupRC = git_branch_lookup(&ref, repo, name, GIT_BRANCH_LOCAL)
+            if lookupRC == GIT_ENOTFOUND.rawValue {
+                throw Libgit2Error(code: -1, klass: 0,
+                    message: "branch '\(name)' not found.")
+            }
+            try check(lookupRC)
+            defer { git_reference_free(ref) }
+
+            // Real git's `-d` (without `-D`) errors when the branch
+            // hasn't been merged into HEAD; libgit2 doesn't enforce
+            // that, so we run the check ourselves via descendant_of.
+            if !force, try unmergedAgainstHead(repo: repo, ref: ref) {
+                throw Libgit2Error(code: -1, klass: 0,
+                    message: "the branch '\(name)' is not fully merged.")
+            }
+            try check(git_branch_delete(ref))
+        }
+    }
+
+    /// Rename `oldName` (or the current branch when nil) to `newName`.
+    /// `force == true` overwrites an existing branch with the new name.
+    public func branchRename(
+        from oldName: String? = nil, to newName: String, force: Bool = false
+    ) async throws {
+        // Resolve the current branch outside withRepository so we can
+        // call our async accessor; the rename then runs in one txn.
+        let resolvedOld: String
+        if let oldName {
+            resolvedOld = oldName
+        } else {
+            guard let current = try await currentBranch() else {
+                throw Libgit2Error(code: -1, klass: 0,
+                    message: "no current branch to rename")
+            }
+            resolvedOld = current
+        }
+        try withRepository { repo in
+            var ref: OpaquePointer?
+            try check(git_branch_lookup(&ref, repo, resolvedOld, GIT_BRANCH_LOCAL))
+            defer { git_reference_free(ref) }
+            var newRef: OpaquePointer?
+            try check(git_branch_move(&newRef, ref, newName, force ? 1 : 0))
+            git_reference_free(newRef)
+        }
+    }
+
+    /// Helper: true when `ref`'s commit is NOT reachable from HEAD.
+    /// Used by `branchDelete` to mimic real git's `-d` safety check.
+    private func unmergedAgainstHead(repo: OpaquePointer?, ref: OpaquePointer?) throws -> Bool {
+        guard let target = git_reference_target(ref) else { return false }
+        var head: OpaquePointer?
+        let headRC = git_repository_head(&head, repo)
+        if headRC != 0 { return false }
+        defer { git_reference_free(head) }
+        guard let headTarget = git_reference_target(head) else { return false }
+
+        var refOID = target.pointee
+        var headOID = headTarget.pointee
+        // Same-commit case: branches pointing at HEAD are considered
+        // merged (real git allows `-d` here without complaint).
+        if withUnsafePointer(to: &refOID, { ref in
+            withUnsafePointer(to: &headOID, { head in
+                git_oid_cmp(ref, head) == 0
+            })
+        }) {
+            return false
+        }
+        let rc = git_graph_descendant_of(repo, &headOID, &refOID)
+        if rc < 0 { return false }
+        return rc == 0  // 1 = HEAD descends from ref → merged; 0 = unmerged
+    }
 }

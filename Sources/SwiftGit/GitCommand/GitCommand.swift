@@ -22,13 +22,22 @@ public struct GitCommand: AsyncParsableCommand {
             Checkout.self,
             Push.self,
             Add.self,
+            Reset.self,
+            Status.self,
             Commit.self,
             Merge.self,
             Rebase.self,
+            CherryPick.self,
             Diff.self,
+            Log.self,
             StashCommand.self,
             RemoteCommand.self,
             Branch.self,
+            Tag.self,
+            RevParse.self,
+            Show.self,
+            Mv.self,
+            Rm.self,
         ]
     )
 

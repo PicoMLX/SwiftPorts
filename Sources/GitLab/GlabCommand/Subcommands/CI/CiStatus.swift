@@ -28,7 +28,7 @@ struct CiStatus: AsyncParsableCommand {
     func run() async throws {
         let target = try await CommandContext.resolveRepo(flag: repo)
         let client = try await CommandContext.apiClient(host: target.host)
-        let gitClient: any GitClient = ProcessGitClient()
+        let gitClient: any ForgeKit.GitClient = CommandContext.gitClient()
         let ref = try await CiSupport.pickRef(branch: branch, gitClient: gitClient)
 
         while true {

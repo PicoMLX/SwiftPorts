@@ -367,18 +367,17 @@ public struct GitClient: ForgeKit.GitClient {
                 }
             }
 
-            // 6. Resolve signature: caller-provided or repo defaults.
-            var signature: UnsafeMutablePointer<git_signature>?
-            if let author {
-                try check(author.name.withCString { n in
-                    author.email.withCString { e in
-                        git_signature_now(&signature, n, e)
-                    }
-                })
-            } else {
-                try check(git_signature_default(&signature, repo))
-            }
-            defer { git_signature_free(signature) }
+            // 6. Resolve author + committer signatures separately —
+            //    real git keeps them distinct so CI replay scenarios
+            //    (different GIT_AUTHOR_* and GIT_COMMITTER_*) work.
+            //    `SignatureResolver` honours the env-var precedence
+            //    chain real git documents in `git-commit-tree(1)`.
+            let authorSig = try SignatureResolver.resolve(
+                role: .author, override: author, repo: repo)
+            defer { git_signature_free(authorSig) }
+            let committerSig = try SignatureResolver.resolve(
+                role: .committer, override: nil, repo: repo)
+            defer { git_signature_free(committerSig) }
 
             // 7. Create the commit, updating HEAD in one shot.
             var commitOID = git_oid()
@@ -389,8 +388,8 @@ public struct GitClient: ForgeKit.GitClient {
                         &commitOID,
                         repo,
                         "HEAD",
-                        signature,
-                        signature,
+                        authorSig,
+                        committerSig,
                         nil,        // message_encoding (UTF-8 default)
                         msg,
                         newTree,

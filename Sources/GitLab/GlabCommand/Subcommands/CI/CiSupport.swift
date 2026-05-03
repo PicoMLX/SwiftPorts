@@ -11,7 +11,7 @@ enum CiSupport {
         repo: RepositoryReference,
         client: APIClient,
         branch: String?,
-        gitClient: any GitClient
+        gitClient: any ForgeKit.GitClient
     ) async throws -> Int {
         if let explicit { return explicit }
         let ref = try await pickRef(branch: branch, gitClient: gitClient)
@@ -25,7 +25,7 @@ enum CiSupport {
     /// otherwise ask the local git client.
     static func pickRef(
         branch: String?,
-        gitClient: any GitClient
+        gitClient: any ForgeKit.GitClient
     ) async throws -> String {
         if let branch, !branch.isEmpty { return branch }
         if let cwd = try? await gitClient.currentBranch(), !cwd.isEmpty {
@@ -42,7 +42,7 @@ enum CiSupport {
         repo: RepositoryReference,
         client: APIClient,
         branch: String?,
-        gitClient: any GitClient
+        gitClient: any ForgeKit.GitClient
     ) async throws -> Job {
         if let id = Int(argument) {
             return try await client.get(

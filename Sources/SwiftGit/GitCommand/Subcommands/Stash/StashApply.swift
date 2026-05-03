@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 
 struct StashApply: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -21,8 +22,9 @@ struct StashApply: AsyncParsableCommand {
             throw CLIError.stderr("No stash entries found.", exitCode: 1)
         }
         try await client.stashApply(index: idx, reinstateIndex: reinstateIndex)
-        // Real git follows up with a `git status` summary; we don't
-        // implement status, so stay silent on success — close enough
-        // for scripted use.
+        // Real git follows up with a `git status` block — the
+        // verbose form, same wording as `git status` itself.
+        let report = try await client.status()
+        FileHandle.standardOutput.write(Data(report.verboseFormat().utf8))
     }
 }
