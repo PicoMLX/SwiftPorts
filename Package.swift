@@ -37,6 +37,14 @@ let package = Package(
         // directions and is the de-facto Swift YAML library.
         .package(url: "https://github.com/jpsim/Yams",
                  from: "6.0.0"),
+        // Pure-Swift PKZIP reader/writer. Uses Apple's libcompression
+        // on Apple platforms and the system zlib elsewhere — same
+        // universally-available system dep SwiftBash's CZlib needs.
+        // Used by `gh run view --log` and (eventually) `gh run download
+        // --extract` to handle the ZIP archives GitHub returns for run
+        // logs and artifacts.
+        .package(url: "https://github.com/weichsel/ZIPFoundation",
+                 from: "0.9.19"),
     ],
     targets: [
         .target(
@@ -48,6 +56,7 @@ let package = Package(
                 .product(name: "Configuration", package: "swift-configuration"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Yams", package: "Yams"),
+                .product(name: "ZIPFoundation", package: "ZIPFoundation"),
             ],
             path: "Sources/SwiftGHCore"
         ),
