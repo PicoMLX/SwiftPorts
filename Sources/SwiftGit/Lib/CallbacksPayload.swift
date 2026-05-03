@@ -90,7 +90,7 @@ private let combinedSidebandTrampoline: git_transport_message_cb = {
     guard box.reporter != nil,
           !(box.reporter!.suppressTransferProgress) else { return 0 }
     var copy = [UInt8](repeating: 0, count: Int(len))
-    copy.withUnsafeMutableBufferPointer { buf in
+    _ = copy.withUnsafeMutableBufferPointer { buf in
         memcpy(buf.baseAddress, strPtr, Int(len))
     }
     let chunk = String(decoding: copy, as: UTF8.self)

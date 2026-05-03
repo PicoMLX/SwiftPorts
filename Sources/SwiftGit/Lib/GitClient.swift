@@ -382,7 +382,7 @@ public struct GitClient: ForgeKit.GitClient {
             // 7. Create the commit, updating HEAD in one shot.
             var commitOID = git_oid()
             var parentArray: [OpaquePointer?] = hasParent ? [parent] : []
-            try parentArray.withUnsafeMutableBufferPointer { parents in
+            _ = try parentArray.withUnsafeMutableBufferPointer { parents in
                 try message.withCString { msg in
                     try check(git_commit_create(
                         &commitOID,

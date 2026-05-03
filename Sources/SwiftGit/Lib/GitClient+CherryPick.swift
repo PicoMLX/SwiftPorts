@@ -217,7 +217,7 @@ extension GitClient {
 
         var commitOID = git_oid()
         var parents: [OpaquePointer?] = [parentCommit]
-        try parents.withUnsafeMutableBufferPointer { pbuf in
+        _ = try parents.withUnsafeMutableBufferPointer { pbuf in
             try message.withCString { msg in
                 try check(git_commit_create(
                     &commitOID, repo, "HEAD", authorSig, committerSig, nil,

@@ -1,9 +1,11 @@
 import Foundation
 
+#if os(macOS) || os(Linux) || os(Windows)
 /// Default `GitClient` impl that shells out to `git` via `Process`.
 ///
-/// Mac and Linux only — embedders on iOS / sandboxed Mac processes
-/// should inject `NoGitClient` instead.
+/// Available only where `Process` is launchable — macOS, Linux, and
+/// Windows. iOS / tvOS / watchOS embedders should use ``NoGitClient``
+/// (or now `SwiftGit.GitClient` for full functionality).
 public struct ProcessGitClient: GitClient {
     public let workingDirectory: URL
     public let gitPath: String
@@ -145,3 +147,4 @@ public struct ProcessGitClient: GitClient {
         }
     }
 }
+#endif

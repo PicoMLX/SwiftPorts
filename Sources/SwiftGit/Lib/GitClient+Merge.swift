@@ -60,7 +60,7 @@ extension GitClient {
             var analysis = git_merge_analysis_t(0)
             var preference = git_merge_preference_t(0)
             var heads: [OpaquePointer?] = [theirAC]
-            try heads.withUnsafeMutableBufferPointer { headBuf in
+            _ = try heads.withUnsafeMutableBufferPointer { headBuf in
                 try check(git_merge_analysis(
                     &analysis, &preference, repo, headBuf.baseAddress, 1))
             }
@@ -190,7 +190,7 @@ extension GitClient {
             | GIT_CHECKOUT_ALLOW_CONFLICTS.rawValue
 
         var heads: [OpaquePointer?] = [theirAC]
-        try heads.withUnsafeMutableBufferPointer { buf in
+        _ = try heads.withUnsafeMutableBufferPointer { buf in
             try check(git_merge(repo, buf.baseAddress, 1, &mergeOpts, &coOpts))
         }
 
@@ -241,7 +241,7 @@ extension GitClient {
         let resolvedMessage = message ?? defaultMergeMessage(refName: theirRef)
         var commitOID = git_oid()
         var parents: [OpaquePointer?] = [parentCommit, theirCommit]
-        try parents.withUnsafeMutableBufferPointer { pbuf in
+        _ = try parents.withUnsafeMutableBufferPointer { pbuf in
             try resolvedMessage.withCString { msg in
                 try check(git_commit_create(
                     &commitOID, repo, "HEAD", sig, sig, nil,

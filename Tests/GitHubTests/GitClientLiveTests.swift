@@ -3,6 +3,7 @@ import Testing
 @testable import GitHub
 @testable import ForgeKit
 
+#if os(macOS) || os(Linux) || os(Windows)
 /// Opt-in: actually shells out to `git`. Skipped unless we're inside
 /// a git repo and `SWIFTGH_LIVE=1` is set. The test cwd at execution
 /// time is the package root, which IS the SwiftPorts checkout once we
@@ -53,3 +54,4 @@ struct GitClientLiveTests {
         return after.split(separator: ":").first.map(String.init)
     }
 }
+#endif

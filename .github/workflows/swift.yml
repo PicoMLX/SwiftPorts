@@ -43,19 +43,14 @@ jobs:
       # it's available so xcodebuild can find a matching destination.
       - name: Install iOS Simulator runtime
         run: sudo xcodebuild -downloadPlatform iOS
-      # Auto-generated `<Package>-Package` umbrella scheme covers all
-      # our library targets. Executables (`gh`, `glab`, `git`, `zip`,
-      # `unzip`) build at the SwiftPM-level and are ineligible for the
-      # iOS destination — that's expected.
+      # Build the library targets only — our test fixtures use
+      # `Process` to drive the system `git` binary, which the iOS SDK
+      # marks unavailable. `xcodebuild build` against the umbrella
+      # SwiftPM scheme verifies our Swift code compiles for iOS; the
+      # test bundle stays a macOS-only concern.
       - name: Build (iOS Simulator)
         run: |
           xcodebuild build \
-            -scheme SwiftPorts-Package \
-            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 15' \
-            -skipPackagePluginValidation
-      - name: Test (iOS Simulator)
-        run: |
-          xcodebuild test \
             -scheme SwiftPorts-Package \
             -destination 'platform=iOS Simulator,OS=latest,name=iPhone 15' \
             -skipPackagePluginValidation

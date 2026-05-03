@@ -69,13 +69,12 @@ struct Reset: AsyncParsableCommand {
         let outcome: ResetOutcome
         do {
             outcome = try await client.reset(to: target, mode: mode)
-        } catch let err as Libgit2Error {
+        } catch is Libgit2Error {
             // Real git distinguishes "unknown revision" from "not a path";
             // libgit2 lumps them. Emit the closer-to-real-git message.
             throw CLIError.stderr(
                 "fatal: ambiguous argument '\(target)': unknown revision or path not in the working tree.",
                 exitCode: 128)
-            _ = err
         }
 
         // Output: silent for soft + mixed, summary line for hard.

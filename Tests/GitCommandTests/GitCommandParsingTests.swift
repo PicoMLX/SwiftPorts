@@ -639,6 +639,113 @@ struct GitCommandParsingTests {
         #expect(paths == ["a.txt"])
     }
 
+    @Test("tag: bare lists")
+    func tagBareList() throws {
+        let cmd = try parse(["tag"], as: Tag.self)
+        #expect(cmd.delete == false)
+        #expect(cmd.annotate == false)
+    }
+
+    @Test("tag: -a -m annotated")
+    func tagAnnotateParse() throws {
+        let cmd = try parse(["tag", "-a", "v1.0", "-m", "rel"], as: Tag.self)
+        #expect(cmd.annotate == true)
+    }
+
+    @Test("tag: -d delete")
+    func tagDeleteParse() throws {
+        let cmd = try parse(["tag", "-d", "v1.0"], as: Tag.self)
+        #expect(cmd.delete == true)
+    }
+
+    @Test("tag: -n with annotation listing")
+    func tagAnnotationListing() throws {
+        let cmd = try parse(["tag", "-n"], as: Tag.self)
+        #expect(cmd.withAnnotation == true)
+    }
+
+    @Test("rev-parse: --short HEAD")
+    func revParseShort() throws {
+        let cmd = try parse(["rev-parse", "--short", "HEAD"], as: RevParse.self)
+        #expect(cmd.short == true)
+        #expect(cmd.specs == ["HEAD"])
+    }
+
+    @Test("rev-parse: --git-dir / --is-inside-work-tree")
+    func revParseFlags() throws {
+        #expect(try parse(["rev-parse", "--git-dir"], as: RevParse.self).gitDir == true)
+        #expect(try parse(["rev-parse", "--is-inside-work-tree"], as: RevParse.self).isInsideWorkTree == true)
+    }
+
+    @Test("show: bare and ref")
+    func showParse() throws {
+        #expect(try parse(["show"], as: Show.self).spec == nil)
+        #expect(try parse(["show", "HEAD~1"], as: Show.self).spec == "HEAD~1")
+    }
+
+    @Test("mv: source + destination")
+    func mvParse() throws {
+        let cmd = try parse(["mv", "old.txt", "new.txt"], as: Mv.self)
+        #expect(cmd.source == "old.txt")
+        #expect(cmd.destination == "new.txt")
+    }
+
+    @Test("rm: --cached + paths")
+    func rmCachedParse() throws {
+        let cmd = try parse(["rm", "--cached", "a.txt", "b.txt"], as: Rm.self)
+        #expect(cmd.cached == true)
+        #expect(cmd.paths == ["a.txt", "b.txt"])
+    }
+
+    @Test("config: --global write form")
+    func configGlobalSet() throws {
+        let cmd = try parse(["config", "--global", "user.email", "x@y.z"], as: Config.self)
+        #expect(cmd.global == true)
+        #expect(cmd.args == ["user.email", "x@y.z"])
+    }
+
+    @Test("config: --list flag")
+    func configList() throws {
+        #expect(try parse(["config", "--list"], as: Config.self).list == true)
+        #expect(try parse(["config", "-l"], as: Config.self).list == true)
+    }
+
+    @Test("switch: -c new branch")
+    func switchCreate() throws {
+        let cmd = try parse(["switch", "-c", "feat"], as: Switch.self)
+        #expect(cmd.create == "feat")
+    }
+
+    @Test("switch: -C force-create")
+    func switchForceCreate() throws {
+        let cmd = try parse(["switch", "-C", "feat"], as: Switch.self)
+        #expect(cmd.forceCreate == "feat")
+    }
+
+    @Test("restore: --staged + paths")
+    func restoreStagedParse() throws {
+        let cmd = try parse(["restore", "--staged", "a.txt"], as: Restore.self)
+        #expect(cmd.staged == true)
+        #expect(cmd.paths == ["a.txt"])
+    }
+
+    @Test("restore: --source + paths")
+    func restoreSourceParse() throws {
+        let cmd = try parse(["restore", "--source", "HEAD~1", "a.txt"], as: Restore.self)
+        #expect(cmd.source == "HEAD~1")
+    }
+
+    @Test("clean: -n dry-run")
+    func cleanDryRun() throws {
+        let cmd = try parse(["clean", "-n"], as: Clean.self)
+        #expect(cmd.dryRun == true)
+    }
+
+    @Test("ls-files: bare invocation")
+    func lsFilesBare() throws {
+        _ = try parse(["ls-files"], as: LsFiles.self)
+    }
+
     @Test("missing subcommand exits non-zero")
     func missingSubcommandFails() {
         #expect(throws: (any Error).self) {
