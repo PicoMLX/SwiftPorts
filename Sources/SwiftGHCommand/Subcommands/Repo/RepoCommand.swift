@@ -10,6 +10,11 @@ struct RepoCommand: AsyncParsableCommand {
             RepoClone.self,
             RepoCreate.self,
             RepoFork.self,
+            RepoEdit.self,
+            RepoRename.self,
+            RepoArchive.self,
+            RepoUnarchive.self,
+            RepoDelete.self,
         ]
     )
 }

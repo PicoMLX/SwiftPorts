@@ -8,9 +8,14 @@ struct IssueCommand: AsyncParsableCommand {
             IssueList.self,
             IssueView.self,
             IssueCreate.self,
+            IssueEdit.self,
             IssueCommentCommand.self,
             IssueClose.self,
             IssueReopen.self,
+            IssueLock.self,
+            IssueUnlock.self,
+            IssuePin.self,
+            IssueUnpin.self,
         ]
     )
 }

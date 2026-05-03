@@ -8,11 +8,18 @@ struct PrCommand: AsyncParsableCommand {
             PrList.self,
             PrView.self,
             PrCreate.self,
+            PrEdit.self,
             PrCheckout.self,
             PrMerge.self,
             PrClose.self,
             PrReopen.self,
+            PrReady.self,
+            PrLock.self,
+            PrUnlock.self,
             PrCommentCommand.self,
+            PrDiff.self,
+            PrUpdateBranch.self,
+            PrChecks.self,
         ]
     )
 }

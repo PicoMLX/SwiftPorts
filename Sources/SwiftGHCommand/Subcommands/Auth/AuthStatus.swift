@@ -30,10 +30,17 @@ struct AuthStatus: AsyncParsableCommand {
         }
 
         let client = GraphQLClient(configuration: config)
+        // Use REST /user too, just for the X-OAuth-Scopes header.
+        let restClient = APIClient(configuration: config)
         do {
             let result: ViewerQuery = try await client.query(ViewerQuery.query)
             print("  \(ANSI.green("✓")) Logged in to \(ANSI.bold(config.host)) as \(ANSI.bold(result.viewer.login)) \(ANSI.dim("(token from \(source.humanReadable))"))")
             print("    URL: \(result.viewer.url.absoluteString)")
+            if let scopesResponse = try? await restClient.raw(method: .get, path: "user"),
+               let scopes = scopesResponse.oauthScopes {
+                let label = scopes.isEmpty ? "(none)" : scopes.joined(separator: ", ")
+                print("    Token scopes: \(label)")
+            }
             if showToken {
                 print("    Token: \(token)")
             } else {

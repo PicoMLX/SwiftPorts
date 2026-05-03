@@ -21,6 +21,12 @@ public struct GhCommand: AsyncParsableCommand {
             ConfigCommand.self,
             ProjectCommand.self,
             BrowseCommand.self,
+            SshKeyCommand.self,
+            GpgKeyCommand.self,
+            OrgCommand.self,
+            VariableCommand.self,
+            CacheCommand.self,
+            SecretCommand.self,
         ]
     )
 

@@ -9,6 +9,7 @@ public struct APIResponse: Sendable {
     public let rateLimitRemaining: Int?
     public let rateLimitResetAt: Date?
     public let contentType: String?
+    public let oauthScopes: [String]?
     public let url: URL
 
     public init(
@@ -18,6 +19,7 @@ public struct APIResponse: Sendable {
         rateLimitRemaining: Int?,
         rateLimitResetAt: Date?,
         contentType: String?,
+        oauthScopes: [String]? = nil,
         url: URL
     ) {
         self.status = status
@@ -26,6 +28,7 @@ public struct APIResponse: Sendable {
         self.rateLimitRemaining = rateLimitRemaining
         self.rateLimitResetAt = rateLimitResetAt
         self.contentType = contentType
+        self.oauthScopes = oauthScopes
         self.url = url
     }
 }

@@ -184,6 +184,11 @@ public actor APIClient {
             .flatMap(TimeInterval.init)
             .map { Date(timeIntervalSince1970: $0) }
         let contentType = response.headerFields[.contentType]
+        let scopes: [String]? = response.headerFields[.oauthScopes].map { value in
+            value.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
 
         logger.debug(
             "HTTP \(response.status.code) (\(data.count) bytes; rate-remaining=\(remaining.map(String.init) ?? "?"))")
@@ -195,6 +200,7 @@ public actor APIClient {
             rateLimitRemaining: remaining,
             rateLimitResetAt: resetAt,
             contentType: contentType,
+            oauthScopes: scopes,
             url: url
         )
 
@@ -243,4 +249,5 @@ extension HTTPField.Name {
     static let rateLimitRemaining = HTTPField.Name("X-RateLimit-Remaining")!
     static let rateLimitReset = HTTPField.Name("X-RateLimit-Reset")!
     static let link = HTTPField.Name("Link")!
+    static let oauthScopes = HTTPField.Name("X-OAuth-Scopes")!
 }
