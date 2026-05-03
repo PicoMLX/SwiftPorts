@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import Testing
-@testable import Zip
+@testable import ZipCommand
 
 @Suite struct ZipParsingTests {
     @Test func parsesArchiveAndInputs() throws {

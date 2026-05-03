@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import Testing
-@testable import Unzip
+@testable import UnzipCommand
 
 @Suite struct UnzipParsingTests {
     @Test func parsesBareArchive() throws {

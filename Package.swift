@@ -2,22 +2,20 @@
 import PackageDescription
 
 // SwiftPorts is a monorepo of pure-Swift, cross-platform
-// reimplementations of standard CLI tools and SDK clients. Each port
-// lives in its own `Sources/<TargetName>/` directory but they all
-// share one `Package.swift` and one git history.
+// reimplementations of standard CLI tools and SDK clients.
 //
-// Today: ZipKit (the shared archive library), Zip + Unzip (CLI ports
-// of zip(1) / unzip(1)), and GitHub (port of the gh CLI plus its API
-// client). GitLab is planned to land next to GitHub.
-//
-// Naming convention:
-//   - Library target: matches the upstream project / domain name.
-//     `Zip`, `Unzip`, `ZipKit`, `GitHub`.
-//   - Executable target: same as the binary name. Lowercase. To dodge
-//     macOS's case-insensitive filesystem when an executable shares a
-//     name with a library (e.g. `Zip` lib + `zip` exec), the exec
-//     target is suffixed `Bin` and the binary name is set via the
-//     product alias.
+// Layout convention:
+//   - A pure library port lives flat at `Sources/<Name>/`.
+//   - A library + binary(ies) port lives under an umbrella folder
+//     `Sources/<Umbrella>/` with these subfolders:
+//       Lib/             — the SDK library target, named "<Umbrella>"
+//       <X>Command/      — one library target per binary, holds the
+//                          AsyncParsableCommand types (extendable by
+//                          SwiftBash via cross-package import)
+//       <x>/             — one executable target per binary, a four-line
+//                          @main wrapper that delegates to <X>Command
+//   - Library target names are PascalCase, executable target names are
+//     lowercase and match the binary name.
 
 let package = Package(
     name: "SwiftPorts",
@@ -28,18 +26,25 @@ let package = Package(
         .watchOS(.v11),
     ],
     products: [
-        // Shared archive library — used by Zip, Unzip, GitHub.
+        // ForgeKit — host-agnostic CLI plumbing (IO, Git, Secrets).
+        .library(name: "ForgeKit", targets: ["ForgeKit"]),
+
+        // ZipKit umbrella — Info-ZIP family.
         .library(name: "ZipKit", targets: ["ZipKit"]),
+        .library(name: "ZipCommand", targets: ["ZipCommand"]),
+        .library(name: "UnzipCommand", targets: ["UnzipCommand"]),
+        .executable(name: "zip", targets: ["zip"]),
+        .executable(name: "unzip", targets: ["unzip"]),
 
-        // Zip / Unzip — pure-Swift ports of the Info-ZIP CLIs.
-        .library(name: "Zip", targets: ["Zip"]),
-        .library(name: "Unzip", targets: ["Unzip"]),
-        .executable(name: "zip", targets: ["ZipBin"]),
-        .executable(name: "unzip", targets: ["UnzipBin"]),
-
-        // GitHub — port of the gh(1) CLI + its API client.
+        // GitHub umbrella — gh(1) port.
         .library(name: "GitHub", targets: ["GitHub"]),
+        .library(name: "GhCommand", targets: ["GhCommand"]),
         .executable(name: "gh", targets: ["gh"]),
+
+        // GitLab umbrella — glab port.
+        .library(name: "GitLab", targets: ["GitLab"]),
+        .library(name: "GlabCommand", targets: ["GlabCommand"]),
+        .executable(name: "glab", targets: ["glab"]),
     ],
     dependencies: [
         // Apple / swiftlang
@@ -62,56 +67,64 @@ let package = Package(
                  from: "0.9.19"),
     ],
     targets: [
-        // MARK: ZipKit (shared archive library)
+        // MARK: ForgeKit (host-agnostic plumbing)
+        .target(
+            name: "ForgeKit",
+            path: "Sources/ForgeKit"
+        ),
+
+        // MARK: ZipKit umbrella
         .target(
             name: "ZipKit",
             dependencies: [
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
-            ]
+            ],
+            path: "Sources/ZipKit/Lib"
+        ),
+        .target(
+            name: "ZipCommand",
+            dependencies: [
+                "ZipKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/ZipKit/ZipCommand"
+        ),
+        .target(
+            name: "UnzipCommand",
+            dependencies: [
+                "ZipKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/ZipKit/UnzipCommand"
+        ),
+        .executableTarget(
+            name: "zip",
+            dependencies: ["ZipCommand"],
+            path: "Sources/ZipKit/zip"
+        ),
+        .executableTarget(
+            name: "unzip",
+            dependencies: ["UnzipCommand"],
+            path: "Sources/ZipKit/unzip"
         ),
         .testTarget(
             name: "ZipKitTests",
             dependencies: ["ZipKit"]
         ),
-
-        // MARK: Zip (zip(1) port) — library + binary
-        .target(
-            name: "Zip",
-            dependencies: [
-                "ZipKit",
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]
-        ),
-        .executableTarget(
-            name: "ZipBin",
-            dependencies: ["Zip"]
-        ),
         .testTarget(
             name: "ZipTests",
-            dependencies: ["Zip", "ZipKit"]
-        ),
-
-        // MARK: Unzip (unzip(1) port) — library + binary
-        .target(
-            name: "Unzip",
-            dependencies: [
-                "ZipKit",
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]
-        ),
-        .executableTarget(
-            name: "UnzipBin",
-            dependencies: ["Unzip"]
+            dependencies: ["ZipCommand", "ZipKit"]
         ),
         .testTarget(
             name: "UnzipTests",
-            dependencies: ["Unzip", "ZipKit"]
+            dependencies: ["UnzipCommand", "ZipKit"]
         ),
 
-        // MARK: GitHub (gh(1) port) — library + binary
+        // MARK: GitHub umbrella
         .target(
             name: "GitHub",
             dependencies: [
+                "ForgeKit",
                 "ZipKit",
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
@@ -119,19 +132,59 @@ let package = Package(
                 .product(name: "Configuration", package: "swift-configuration"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Yams", package: "Yams"),
+            ],
+            path: "Sources/GitHub/Lib"
+        ),
+        .target(
+            name: "GhCommand",
+            dependencies: [
+                "GitHub",
+                "ForgeKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]
+            ],
+            path: "Sources/GitHub/GhCommand"
         ),
         .executableTarget(
             name: "gh",
-            dependencies: [
-                "GitHub",
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]
+            dependencies: ["GhCommand"],
+            path: "Sources/GitHub/gh"
         ),
         .testTarget(
             name: "GitHubTests",
-            dependencies: ["GitHub"],
+            dependencies: ["GitHub", "GhCommand", "ForgeKit"],
+            resources: [
+                .copy("Fixtures"),
+            ]
+        ),
+
+        // MARK: GitLab umbrella
+        .target(
+            name: "GitLab",
+            dependencies: [
+                "ForgeKit",
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "HTTPTypesFoundation", package: "swift-http-types"),
+            ],
+            path: "Sources/GitLab/Lib"
+        ),
+        .target(
+            name: "GlabCommand",
+            dependencies: [
+                "GitLab",
+                "ForgeKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/GitLab/GlabCommand"
+        ),
+        .executableTarget(
+            name: "glab",
+            dependencies: ["GlabCommand"],
+            path: "Sources/GitLab/glab"
+        ),
+        .testTarget(
+            name: "GitLabTests",
+            dependencies: ["GitLab", "GlabCommand", "ForgeKit"],
             resources: [
                 .copy("Fixtures"),
             ]

@@ -1,28 +1,29 @@
 # Agent instructions — SwiftPorts
 
 A monorepo of pure-Swift, cross-platform reimplementations of standard
-CLI tools and SDK clients. Each port lives in its own
-`Sources/<TargetName>/` directory and gets a separate library +
-executable product, but they share one `Package.swift`, one git
+CLI tools and SDK clients. They share one `Package.swift`, one git
 history, and one test runner.
 
 ## Today's targets
 
-| Library  | Binary  | What it ports                                     |
-|----------|---------|---------------------------------------------------|
-| `ZipKit` | —       | Pure-Swift PKZIP archive operations on top of `weichsel/ZIPFoundation`. Shared by Zip / Unzip / GitHub. |
-| `Zip`    | `zip`   | Info-ZIP `zip(1)` — create archives. |
-| `Unzip`  | `unzip` | Info-ZIP `unzip(1)` — extract / list / test / pipe. |
-| `GitHub` | `gh`    | GitHub CLI ([cli/cli](https://github.com/cli/cli)). |
-
-**Planned next:** `GitLab` (parallel to `GitHub`).
+| Library        | Binary | What it ports                                     |
+|----------------|--------|---------------------------------------------------|
+| `ForgeKit`     | —      | Host-agnostic CLI plumbing: ANSI/TTY, Git client (Process + No-op), Secret store (Keychain + InMemory). Used by `GitHub` and the upcoming `GitLab`. |
+| `ZipKit`       | —      | Pure-Swift PKZIP archive operations on top of `weichsel/ZIPFoundation`. Shared by Zip / Unzip / GitHub. |
+| `ZipCommand`   | `zip`  | Info-ZIP `zip(1)` — create archives. |
+| `UnzipCommand` | `unzip`| Info-ZIP `unzip(1)` — extract / list / test / pipe. |
+| `GitHub`       | —      | GitHub SDK: API client, Codable models, OAuth device flow, GraphQL. No ArgumentParser dependency. |
+| `GhCommand`    | `gh`   | The `gh` subcommand tree — built on top of `GitHub` + `ForgeKit`. SwiftBash extends `GhCommand` to register the whole tree as a Bash builtin. |
+| `GitLab`       | —      | GitLab SDK: REST API client (`X-Next-Page` pagination, Bearer auth, `gitlab.com` and self-hosted instances), Codable models, `RepositoryReference` with nested-subgroup support. No ArgumentParser dependency. |
+| `GlabCommand`  | `glab` | The `glab` subcommand tree — built on top of `GitLab` + `ForgeKit`. Today: `issue list / view / create / close / reopen / note / subscribe / unsubscribe / delete`. |
 
 ## Build, test, run
 
 ```bash
 swift build                              # builds everything
-swift test                               # all targets, all tests (~133 today)
+swift test                               # all targets, all tests (156 today)
 swift run gh ...                         # GitHub CLI
+swift run glab ...                       # GitLab CLI
 swift run zip ...                        # zip(1)
 swift run unzip ...                      # unzip(1)
 ```
@@ -30,49 +31,89 @@ swift run unzip ...                      # unzip(1)
 `swift build -c release` produces optimized binaries under
 `.build/release/`.
 
-## Layout
+## Layout — umbrella convention
+
+A port is either:
+
+- **Pure library** — flat folder `Sources/<Name>/`, one library target.
+- **Library + binaries** — umbrella folder `Sources/<Umbrella>/` containing:
+  - `Lib/` — the SDK library target, named `<Umbrella>` (e.g. `ZipKit`, `GitHub`).
+  - `<X>Command/` — one library target per binary, holding the
+    AsyncParsableCommand types (top-level + every subcommand). Library
+    target so SwiftBash and other consumers can import it across
+    packages and extend the Command struct.
+  - `<x>/` — one executable target per binary, a four-line `Entry.swift`
+    `@main` wrapper that delegates to `<X>Command.main()`.
+
+The three layers form a one-way dependency chain:
+`<x>` exec → `<X>Command` lib → `<Umbrella>` SDK lib → `ForgeKit` (when
+applicable). The SDK lib has zero `ArgumentParser` dependency.
 
 ```
 Sources/
-  ZipKit/        — shared archive library (Archive, Entry, GlobMatcher, …)
-  Zip/           — ZipCommand: AsyncParsableCommand
-  ZipBin/        — @main wrapper, product alias → binary `zip`
-  Unzip/         — UnzipCommand: AsyncParsableCommand
-  UnzipBin/      — @main wrapper, product alias → binary `unzip`
-  GitHub/        — gh's API client + Codable models + AsyncParsableCommand structs
-  gh/            — @main wrapper for the gh binary
+  ForgeKit/                          flat library — no umbrella
+    IO/, Git/, Secrets/
+
+  ZipKit/                            Info-ZIP umbrella — 1 SDK + 2 binaries
+    Lib/                                target "ZipKit"
+    ZipCommand/                         target "ZipCommand"
+    UnzipCommand/                       target "UnzipCommand"
+    zip/                                target "zip"   (exec)
+    unzip/                              target "unzip" (exec)
+
+  GitHub/                            gh umbrella — 1 SDK + 1 binary
+    Lib/                                target "GitHub"      (no ArgumentParser dep)
+    GhCommand/                          target "GhCommand"   (Subcommands/, glue)
+    gh/                                 target "gh"          (exec)
+
+  GitLab/                            glab umbrella — same shape as GitHub
+    Lib/                                target "GitLab"      (no ArgumentParser dep)
+    GlabCommand/                        target "GlabCommand" (Subcommands/Issue/, glue)
+    glab/                               target "glab"        (exec)
+
 Tests/
-  ZipKitTests/   — Archive round-trips, GlobMatcher
-  ZipTests/      — ZipCommand argv parsing
-  UnzipTests/    — UnzipCommand argv parsing
+  ForgeKitTests/      — IO, Git, Secret store primitives (folded into GitHubTests today)
+  ZipKitTests/        — Archive round-trips, GlobMatcher
+  ZipTests/           — ZipCommand argv (depends on "ZipCommand")
+  UnzipTests/         — UnzipCommand argv (depends on "UnzipCommand")
   GitHubTests/
-    Fixtures/    — Captured GitHub API JSON responses
-    *Tests/      — Decode tests, networking mocks, command parsing
+    Fixtures/         — captured GitHub API JSON
+    *Tests/           — SDK decode, networking mocks, OAuth, Configuration,
+                       command parsing — depends on "GitHub", "GhCommand",
+                       "ForgeKit"
+  GitLabTests/
+    Fixtures/         — captured GitLab API JSON
+    *Tests/           — SDK decode, RepositoryReference parsing, Configuration,
+                       IssueArgument parsing — depends on "GitLab",
+                       "GlabCommand", "ForgeKit"
 ```
 
 ## Naming conventions
 
-- **Library target** = the upstream project / domain name, capitalized:
-  `Zip`, `Unzip`, `ZipKit`, `GitHub`.
-- **Executable target** name = same as the binary, lowercase: `zip`,
-  `unzip`, `gh`. To dodge macOS's case-insensitive filesystem when an
-  exec name collides with a library (`Zip` lib + `zip` exec), the
-  exec target is suffixed `Bin` (`ZipBin`, `UnzipBin`) and the *binary
-  name* is set via the product alias. The `gh` exec doesn't collide
-  with the `GitHub` lib so no alias needed.
+| Kind | Folder | Target name | Product / Binary |
+|------|--------|-------------|------------------|
+| SDK library | `<Umbrella>/Lib/` | `<Umbrella>` (PascalCase, matches umbrella) | `.library(name: <Umbrella>)` |
+| Command library | `<Umbrella>/<X>Command/` | `<X>Command` (PascalCase) | `.library(name: <X>Command)` |
+| Executable | `<Umbrella>/<x>/` | `<x>` (lowercase, matches binary) | `.executable(name: <x>)` |
+| Standalone library | `<Name>/` (flat) | `<Name>` | `.library(name: <Name>)` |
+
 - **One declaration per file.** `Type+Concern.swift` extensions for
   splitting big types.
 - File basenames must be **unique within a target**. SwiftPM's build
   output uses the basename for `.o` files; duplicates collide.
+- Lowercase exec folders sit alongside PascalCase lib folders without
+  case-folding collisions on macOS's case-insensitive filesystem
+  (because the names don't share a prefix).
 
 ## Conventions inherited across all ports
 
 - **Models are Codable structs**, one per file. Decoder is configured
   centrally via `JSONDecoder.gitHub()` style factories
   (snake_case → camelCase, ISO 8601 dates, base64 data).
-- **Argument-Parser** for every CLI. `AsyncParsableCommand` for
+- **ArgumentParser** for every CLI. `AsyncParsableCommand` for
   anything that does I/O; sync `ParsableCommand` for the very few
-  pure-string subcommands.
+  pure-string subcommands. Lives in the `<X>Command` library, never
+  in the SDK lib or the exec target.
 - **Tests with Swift Testing** (`@Test`, `#expect`, `#require`) — not
   XCTest.
 - **HTTP via `swift-http-types`** + `URLSession` from
@@ -84,37 +125,49 @@ Tests/
 
 ## SwiftBash consumption
 
-When [SwiftBash](../Experiments/SwiftBash) wants to register `zip` /
-`unzip` (or any future CLI port) as a Bash builtin, it:
+SwiftBash registers a port's whole top-level command as a Bash builtin
+via a one-line conformance against the `<X>Command` library target:
 
-1. Adds a path or url dep on this package.
-2. Adds a tiny extension file under `BashCommandKit/Commands/` that
-   conforms the existing `*Command: AsyncParsableCommand` to
-   `ParsableBashCommand`:
+```swift
+import UnzipCommand
+import BashInterpreter
+import ArgumentParser
 
-   ```swift
-   import Unzip
-   import BashInterpreter
-   import ArgumentParser
+extension UnzipCommand: ParsableBashCommand {
+    public mutating func execute() async throws -> ExitStatus {
+        do { try await self.run(); return .success }
+        catch let code as ExitCode { return ExitStatus(rawValue: Int(code.rawValue)) }
+    }
+}
+```
 
-   extension UnzipCommand: ParsableBashCommand {
-       public mutating func execute() async throws -> ExitStatus {
-           do { try await self.run(); return .success }
-           catch let code as ExitCode { return ExitStatus(rawValue: Int(code.rawValue)) }
-       }
-   }
-   ```
+The same pattern works for the deep multi-subcommand CLIs:
 
-3. Registers via `shell.register(UnzipCommand.self)`.
+```swift
+import GhCommand
+extension GhCommand: ParsableBashCommand { … }
+```
 
-The implementation lives here; the conformance lives in SwiftBash. No
-cycle, no GitHub deps leaking into SwiftBash.
+Registering `GhCommand` makes the entire subcommand tree
+(`gh issue list`, `gh pr view`, `gh auth status`, …) addressable as
+one Bash builtin — argv parsing dispatches into the AsyncParsableCommand
+graph automatically.
+
+The conformance lives in SwiftBash; the implementation lives here. No
+cycle. SwiftBash never depends on an executable target.
+
+## GitLab / `glab` specifics
+
+Detailed status, command inventory, and GitLab-specific conventions:
+see [Docs/GitLab.md](Docs/GitLab.md). Today's surface: full `glab
+issue` (list / view / create / update / close / reopen / note /
+subscribe / unsubscribe / delete / board) plus `glab auth`
+(status / login / logout / token, PAT-based).
 
 ## GitHub / `gh` specifics
 
-The `GitHub` target is the largest by far (~120 source files,
-~89 commands). Detailed status, command inventory, and GitHub-specific
-conventions: see [Docs/GitHub.md](Docs/GitHub.md).
+Detailed status, command inventory, and GitHub-specific conventions:
+see [Docs/GitHub.md](Docs/GitHub.md).
 
 Quick highlights:
 - `auth login [--web] [--clipboard]` runs the OAuth device flow
@@ -123,20 +176,28 @@ Quick highlights:
 - Token resolution: `GH_TOKEN > GITHUB_TOKEN > Keychain >
   ~/.config/gh/hosts.yml.oauth_token`.
 - Repo inference from cwd via `git remote get-url origin`
-  (`ProcessGitClient`).
+  (`ProcessGitClient`, in `ForgeKit`).
 - Adopts `swift-configuration`, `swift-http-types`, `swift-crypto`,
   `Yams`, Apple's `Security` framework.
 
 ## Adding a new port
 
-1. Add a `Sources/<NewPort>/` directory + library target.
-2. If it has a CLI binary, add a `Sources/<NewPort>Bin/` exec target
-   with a 4-line `@main` wrapper, and an `.executable` product alias
-   so the binary name doesn't collide with the library name.
-3. Add tests under `Tests/<NewPort>Tests/`.
-4. Update this AGENTS.md's table.
-5. If SwiftBash should adopt it, the conformance + registration
-   happens there.
+1. Decide pure-library or library + binary.
+2. **Pure library**: add `Sources/<Name>/` directly with a `.target`
+   entry in `Package.swift` and a matching `.library` product.
+3. **Library + binary**:
+   - Create `Sources/<Umbrella>/Lib/`, `<X>Command/`, and `<x>/`.
+   - Add three targets in `Package.swift`: `.target(name: <Umbrella>,
+     path: "Sources/<Umbrella>/Lib")`, `.target(name: <X>Command, path:
+     "Sources/<Umbrella>/<X>Command", dependencies: [<Umbrella>,
+     ArgumentParser])`, `.executableTarget(name: <x>, path:
+     "Sources/<Umbrella>/<x>", dependencies: [<X>Command])`.
+   - Add three products: `.library(name: <Umbrella>)`, `.library(name:
+     <X>Command)`, `.executable(name: <x>)`.
+4. Add tests under `Tests/<X>Tests/`.
+5. Update this AGENTS.md's table.
+6. If SwiftBash should adopt it, the conformance + registration
+   happens there against the `<X>Command` library.
 
 ## Skipped / out of scope
 

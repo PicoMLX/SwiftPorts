@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import Testing
 @testable import GitHub
+@testable import GhCommand
 
 @Suite struct ApiCommandParsingTests {
     @Test func defaultsToGet() throws {

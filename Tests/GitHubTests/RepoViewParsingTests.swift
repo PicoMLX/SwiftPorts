@@ -2,7 +2,7 @@ import ArgumentParser
 import Foundation
 import Testing
 @testable import GitHub
-@testable import GitHub
+@testable import GhCommand
 
 /// Mirrors `pkg/cmd/repo/view/view_test.go::TestNewCmdView` from the
 /// Go gh — argv parsing, no network.

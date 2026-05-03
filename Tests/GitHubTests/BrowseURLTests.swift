@@ -2,7 +2,8 @@ import ArgumentParser
 import Foundation
 import Testing
 @testable import GitHub
-@testable import GitHub
+@testable import GhCommand
+@testable import ForgeKit
 
 /// Mostly verifies the URL builder via the parsing layer; the actual
 /// `Browser.open` call happens at runtime and isn't tested here.

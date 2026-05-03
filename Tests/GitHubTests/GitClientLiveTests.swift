@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GitHub
+@testable import ForgeKit
 
 /// Opt-in: actually shells out to `git`. Skipped unless we're inside
 /// a git repo and `SWIFTGH_LIVE=1` is set. The test cwd at execution
