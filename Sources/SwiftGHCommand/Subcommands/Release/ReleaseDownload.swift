@@ -15,8 +15,8 @@ struct ReleaseDownload: AsyncParsableCommand {
     )
 
     @Option(name: [.short, .long],
-            help: "Repository as OWNER/REPO.")
-    var repo: RepositoryReference
+            help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
+    var repo: RepositoryReference?
 
     @Option(name: .long, help: "Release tag to download.")
     var tag: String?
@@ -31,9 +31,10 @@ struct ReleaseDownload: AsyncParsableCommand {
     var directory: String = "."
 
     func run() async throws {
+        let target = try await RepositoryResolver.resolve(flag: repo)
         let client = APIClient()
-        let path = tag.map { "repos/\(repo.slug)/releases/tags/\($0)" }
-            ?? "repos/\(repo.slug)/releases/latest"
+        let path = tag.map { "repos/\(target.slug)/releases/tags/\($0)" }
+            ?? "repos/\(target.slug)/releases/latest"
         let release: Release = try await client.get(path)
 
         let matching = release.assets.filter { asset in

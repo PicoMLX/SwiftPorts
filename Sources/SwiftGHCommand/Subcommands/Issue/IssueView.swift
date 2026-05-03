@@ -9,8 +9,8 @@ struct IssueView: AsyncParsableCommand {
     )
 
     @Option(name: [.short, .long],
-            help: "Repository as OWNER/REPO.")
-    var repo: RepositoryReference
+            help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
+    var repo: RepositoryReference?
 
     @Argument(help: "Issue number.")
     var number: Int
@@ -19,9 +19,10 @@ struct IssueView: AsyncParsableCommand {
     var json: Bool = false
 
     func run() async throws {
+        let target = try await RepositoryResolver.resolve(flag: repo)
         let client = APIClient()
         let issue: Issue = try await client.get(
-            "repos/\(repo.slug)/issues/\(number)")
+            "repos/\(target.slug)/issues/\(number)")
 
         if json {
             print(try CodableOutput.prettyJSON(issue))

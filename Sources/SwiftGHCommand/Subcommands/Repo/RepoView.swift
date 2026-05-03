@@ -8,15 +8,16 @@ struct RepoView: AsyncParsableCommand {
         abstract: "View a repository."
     )
 
-    @Argument(help: "Repository as OWNER/REPO.")
-    var repository: RepositoryReference
+    @Argument(help: "Repository as OWNER/REPO. Omit to use the current directory's git remote.")
+    var repository: RepositoryReference?
 
     @Flag(name: .long, help: "Print the JSON response body.")
     var json: Bool = false
 
     func run() async throws {
+        let target = try await RepositoryResolver.resolve(positional: repository)
         let client = APIClient()
-        let repo: Repository = try await client.get("repos/\(repository.slug)")
+        let repo: Repository = try await client.get("repos/\(target.slug)")
 
         if json {
             print(try CodableOutput.prettyJSON(repo))

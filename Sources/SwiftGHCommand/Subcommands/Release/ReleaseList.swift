@@ -9,8 +9,8 @@ struct ReleaseList: AsyncParsableCommand {
     )
 
     @Option(name: [.short, .long],
-            help: "Repository as OWNER/REPO.")
-    var repo: RepositoryReference
+            help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
+    var repo: RepositoryReference?
 
     @Option(name: [.short, .customLong("limit")],
             help: "Maximum number of releases to fetch.")
@@ -20,10 +20,11 @@ struct ReleaseList: AsyncParsableCommand {
     var json: Bool = false
 
     func run() async throws {
+        let target = try await RepositoryResolver.resolve(flag: repo)
         let client = APIClient()
         let perPage = min(limit, 100)
         let releases: [Release] = try await client.get(
-            "repos/\(repo.slug)/releases",
+            "repos/\(target.slug)/releases",
             query: [URLQueryItem(name: "per_page", value: String(perPage))]
         )
         let trimmed = Array(releases.prefix(limit))
@@ -33,7 +34,7 @@ struct ReleaseList: AsyncParsableCommand {
             return
         }
         if trimmed.isEmpty {
-            print("No releases found in \(repo.slug).")
+            print("No releases found in \(target.slug).")
             return
         }
         for r in trimmed {

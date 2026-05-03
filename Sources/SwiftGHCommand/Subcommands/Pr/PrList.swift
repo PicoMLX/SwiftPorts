@@ -9,8 +9,8 @@ struct PrList: AsyncParsableCommand {
     )
 
     @Option(name: [.short, .long],
-            help: "Repository as OWNER/REPO.")
-    var repo: RepositoryReference
+            help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
+    var repo: RepositoryReference?
 
     @Option(name: [.short, .customLong("state")],
             help: "Filter by state.")
@@ -28,6 +28,7 @@ struct PrList: AsyncParsableCommand {
     var json: Bool = false
 
     func run() async throws {
+        let target = try await RepositoryResolver.resolve(flag: repo)
         let client = APIClient()
         let perPage = min(limit, 100)
         var query: [URLQueryItem] = [
@@ -37,7 +38,7 @@ struct PrList: AsyncParsableCommand {
         if let base { query.append(URLQueryItem(name: "base", value: base)) }
 
         let prs: [PullRequest] = try await client.get(
-            "repos/\(repo.slug)/pulls", query: query)
+            "repos/\(target.slug)/pulls", query: query)
         let trimmed = Array(prs.prefix(limit))
 
         if json {
