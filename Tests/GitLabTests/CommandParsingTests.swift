@@ -400,4 +400,21 @@ import Testing
         let cmd = try VariableUnset.parse(["API_TOKEN"])
         #expect(cmd.key == "API_TOKEN")
     }
+
+    // MARK: CI lint
+
+    @Test func ciLintDefaultsToProjectRoot() throws {
+        let cmd = try CiLint.parse([])
+        #expect(cmd.path == ".gitlab-ci.yml")
+    }
+
+    @Test func ciLintAcceptsExplicitPath() throws {
+        let cmd = try CiLint.parse(["custom-ci.yml"])
+        #expect(cmd.path == "custom-ci.yml")
+    }
+
+    @Test func ciLintAcceptsStdinSentinel() throws {
+        let cmd = try CiLint.parse(["-"])
+        #expect(cmd.path == "-")
+    }
 }

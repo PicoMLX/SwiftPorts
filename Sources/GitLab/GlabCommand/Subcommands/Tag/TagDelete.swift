@@ -20,7 +20,7 @@ struct TagDelete: AsyncParsableCommand {
         let client = try await CommandContext.apiClient(host: target.host)
         let encoded = tagName.addingPercentEncoding(
             withAllowedCharacters: .urlPathAllowed) ?? tagName
-        try await client.raw(
+        _ = try await client.raw(
             method: .delete,
             path: "projects/\(target.encodedPath)/repository/tags/\(encoded)")
         print("Deleted tag \(tagName)")

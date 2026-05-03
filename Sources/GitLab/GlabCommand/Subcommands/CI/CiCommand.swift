@@ -12,6 +12,7 @@ struct CiCommand: AsyncParsableCommand {
             CiRetry.self,
             CiCancel.self,
             CiRun.self,
+            CiLint.self,
         ]
     )
 }
