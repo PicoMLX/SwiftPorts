@@ -162,12 +162,8 @@ extension GitClient {
 
     private func upstreamShorthand(repo: OpaquePointer?, branch: String) throws -> String? {
         var buf = git_buf()
-        let rc = branch.withCString { name -> Int32 in
-            "refs/heads/\(branch)".withCString { full in
-                git_branch_upstream_name(&buf, repo, full)
-            }
-            _ = name
-            return git_branch_upstream_name(&buf, repo, "refs/heads/\(branch)")
+        let rc = "refs/heads/\(branch)".withCString { full -> Int32 in
+            git_branch_upstream_name(&buf, repo, full)
         }
         if rc != 0 { return nil }
         defer { git_buf_dispose(&buf) }

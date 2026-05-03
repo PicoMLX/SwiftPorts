@@ -135,8 +135,8 @@ public struct ProcessGitClient: GitClient {
                     let errData = (try? stderr.fileHandleForReading.readToEnd()) ?? Data()
                     cont.resume(returning: ProcessResult(
                         exitCode: proc.terminationStatus,
-                        stdout: String(data: outData ?? Data(), encoding: .utf8) ?? "",
-                        stderr: String(data: errData ?? Data(), encoding: .utf8) ?? ""
+                        stdout: String(data: outData, encoding: .utf8) ?? "",
+                        stderr: String(data: errData, encoding: .utf8) ?? ""
                     ))
                 }
 

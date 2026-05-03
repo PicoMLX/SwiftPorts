@@ -93,7 +93,7 @@ extension GitClient {
     /// Delete a remote and the associated `branch.<x>.remote` config
     /// entries (libgit2 does the cleanup).
     public func remoteDelete(name: String) async throws {
-        try withRepository { repo in
+        _ = try withRepository { repo in
             try check(name.withCString { n in
                 git_remote_delete(repo, n)
             })
@@ -120,7 +120,7 @@ extension GitClient {
 
     /// Update an existing remote's URL.
     public func remoteSetURL(name: String, url: URL) async throws {
-        try withRepository { repo in
+        _ = try withRepository { repo in
             try check(name.withCString { n in
                 url.absoluteString.withCString { u in
                     git_remote_set_url(repo, n, u)

@@ -92,7 +92,7 @@ extension GitClient {
 
     /// Remove a single stash entry without applying it.
     public func stashDrop(index: Int) async throws {
-        try withRepository { repo in
+        _ = try withRepository { repo in
             try check(git_stash_drop(repo, index))
         }
     }

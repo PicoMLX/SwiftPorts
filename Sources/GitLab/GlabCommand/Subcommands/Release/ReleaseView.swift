@@ -36,7 +36,7 @@ struct ReleaseView: AsyncParsableCommand {
             print("released: \(ISO8601DateFormatter().string(from: when))")
         }
         if let author = release.author {
-            print("author: @\(author.username ?? "")")
+            print("author: @\(author.username)")
         }
         if let body = release.description, !body.isEmpty {
             print("\n\(body)")
