@@ -133,3 +133,40 @@ import Testing
         #expect(v.masked == nil)
     }
 }
+
+@Suite struct LabelDecodingTests {
+    @Test func decodesProjectLabel() throws {
+        let json = """
+        {
+          "id": 11,
+          "name": "bug",
+          "description": "Something broken",
+          "color": "#FF0000",
+          "text_color": "#FFFFFF",
+          "priority": null,
+          "is_project_label": true
+        }
+        """.data(using: .utf8)!
+        let l = try JSONDecoder.gitLab().decode(Label.self, from: json)
+        #expect(l.id == 11)
+        #expect(l.name == "bug")
+        #expect(l.color == "#FF0000")
+        #expect(l.textColor == "#FFFFFF")
+        #expect(l.isProjectLabel == true)
+    }
+
+    @Test func decodesGroupLabel() throws {
+        let json = """
+        {
+          "id": 99,
+          "name": "blocker",
+          "color": "#000000",
+          "is_project_label": false
+        }
+        """.data(using: .utf8)!
+        let l = try JSONDecoder.gitLab().decode(Label.self, from: json)
+        #expect(l.id == 99)
+        #expect(l.isProjectLabel == false)
+        #expect(l.description == nil)
+    }
+}
