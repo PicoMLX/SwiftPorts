@@ -441,4 +441,31 @@ import Testing
         let cmd = try CiLint.parse(["-"])
         #expect(cmd.path == "-")
     }
+
+    // MARK: Repo edit
+
+    @Test func repoEditDescriptionAndDefaultBranch() throws {
+        let cmd = try RepoEdit.parse([
+            "-R", "g/r",
+            "--description", "new desc",
+            "--default-branch", "develop",
+            "--visibility", "internal",
+        ])
+        #expect(cmd.repo?.fullPath == "g/r")
+        #expect(cmd.description == "new desc")
+        #expect(cmd.defaultBranch == "develop")
+        #expect(cmd.visibility == "internal")
+    }
+
+    @Test func repoEditFeatureToggles() throws {
+        let cmd = try RepoEdit.parse([
+            "--enable-issues",
+            "--disable-wiki",
+            "--enable-mrs",
+        ])
+        #expect(cmd.enableIssues == true)
+        #expect(cmd.disableWiki == true)
+        #expect(cmd.enableMRs == true)
+        #expect(cmd.disableIssues == false)
+    }
 }
