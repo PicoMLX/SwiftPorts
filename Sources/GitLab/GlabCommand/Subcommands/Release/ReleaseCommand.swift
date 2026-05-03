@@ -9,6 +9,7 @@ struct ReleaseCommand: AsyncParsableCommand {
             ReleaseView.self,
             ReleaseCreate.self,
             ReleaseDelete.self,
+            ReleaseDownload.self,
         ]
     )
 }

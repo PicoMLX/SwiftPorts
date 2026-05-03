@@ -339,6 +339,20 @@ import Testing
         #expect(cmd.tagName == "v1.0.0")
     }
 
+    @Test func releaseDownloadRequiresTagAndAcceptsFlags() throws {
+        let cmd = try ReleaseDownload.parse([
+            "v1.2.0",
+            "-p", "*.zip",
+            "-p", "*.dmg",
+            "-D", "/tmp/out",
+            "--sources",
+        ])
+        #expect(cmd.tagName == "v1.2.0")
+        #expect(cmd.patterns == ["*.zip", "*.dmg"])
+        #expect(cmd.directory == "/tmp/out")
+        #expect(cmd.sources == true)
+    }
+
     // MARK: Tag
 
     @Test func tagListSearchAndLimit() throws {
