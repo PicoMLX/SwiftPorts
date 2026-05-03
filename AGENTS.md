@@ -318,10 +318,12 @@ no-auth surface; revisit each as the corresponding subcommand comes up.
 
 `OAuthDeviceFlow.ghCLIClientID` is the same `client_id` Go gh
 embeds (`178c6fc778ccc68e1d6a`). It works for development; **before
-SwiftGH ships publicly we must register our own OAuth app** at
-`https://github.com/settings/applications/new` and use that ID as
-the default. Reusing gh's identity would attribute SwiftGH usage
-to the upstream gh project, which is incorrect.
+SwiftGH ships publicly we must register our own OAuth app** and use
+that ID as the default. Reusing gh's identity attributes SwiftGH
+usage to the upstream gh project, which is incorrect.
+
+Step-by-step setup, including the exact form fields and post-registration
+wiring: [Docs/OAuthAppSetup.md](Docs/OAuthAppSetup.md).
 
 ## Gotchas
 
