@@ -1,0 +1,22 @@
+import Foundation
+
+/// `ProjectV2` (the new-style GitHub Projects). Strictly GraphQL — no
+/// REST equivalent.
+public struct ProjectV2: Codable, Sendable, Identifiable {
+    public let id: String
+    public let number: Int
+    public let title: String
+    public let shortDescription: String?
+    public let url: URL
+    public let closed: Bool
+    public let `public`: Bool
+    public let readme: String?
+    public let createdAt: Date
+    public let updatedAt: Date
+}
+
+/// `ProjectV2Connection.nodes` envelope shape.
+public struct ProjectV2Connection: Codable, Sendable {
+    public let nodes: [ProjectV2]
+    public let totalCount: Int?
+}

@@ -19,6 +19,7 @@ public struct GhCommand: AsyncParsableCommand {
             RunCommand.self,
             LabelCommand.self,
             ConfigCommand.self,
+            ProjectCommand.self,
         ]
     )
 
