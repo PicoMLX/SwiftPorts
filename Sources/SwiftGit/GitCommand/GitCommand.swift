@@ -45,6 +45,7 @@ public struct GitCommand: AsyncParsableCommand {
             Clean.self,
             Blame.self,
             Apply.self,
+            Reflog.self,
         ]
     )
 
