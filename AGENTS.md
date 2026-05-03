@@ -22,7 +22,7 @@ liberally — every Swift command has a Go counterpart under
 `gh browse`.
 
 **Write commands shipped:**
-- API-only:
+- API-only (REST):
   - issues: `create / edit / comment / close / reopen / lock / unlock / pin / unpin`
   - PRs: `edit / comment / merge / close / reopen / ready [--undo] / lock / unlock / update-branch`
   - releases: `create / delete`
@@ -35,9 +35,18 @@ liberally — every Swift command has a Go counterpart under
   - cache: `cache delete`
   - labels: `create / edit / delete`
   - secrets: `delete` (set deferred — needs libsodium SealedBox)
+- GraphQL writes:
+  - `gh issue develop` (createLinkedBranch; --checkout uses GitClient)
+  - `gh pr ready [--undo]` (markPullRequestReadyForReview / convertPullRequestToDraft)
+  - projects v2 (full surface):
+    - lifecycle: `project create / edit / close [--undo] / delete / copy [--target-owner ...]`
+    - items: `item-add (--url URL or --draft TITLE) / item-archive [--undo] / item-delete / item-edit (--text/--number/--date/--single-select-option-id/--iteration-id/--clear)`
+    - fields: `field-list / field-create (TEXT/NUMBER/DATE/SINGLE_SELECT --option NAME=COLOR) / field-delete`
+    - admin: `mark-template [--undo] / link / unlink (--repo OWNER/NAME or --team SLUG --team-org ORG)`
 - Git-aware (shell out to `git` via `ProcessGitClient`):
   `gh repo clone / fork [--clone] / create --clone`,
-  `gh pr checkout / create`.
+  `gh pr checkout / create`,
+  `gh issue develop --checkout`.
 
 **Auth shipped:**
 `gh auth login [--web] [--clipboard]` (OAuth device flow → Keychain),
