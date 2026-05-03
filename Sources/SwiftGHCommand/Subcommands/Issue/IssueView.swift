@@ -28,8 +28,9 @@ struct IssueView: AsyncParsableCommand {
             print(try CodableOutput.prettyJSON(issue))
             return
         }
-        print("#\(issue.number)  \(issue.title)")
-        print("state: \(issue.state.rawValue)  author: @\(issue.user.login)")
+        print("\(ANSI.bold("#\(issue.number)"))  \(ANSI.bold(issue.title))")
+        let stateColor: String = issue.state == .open ? ANSI.green("open") : ANSI.magenta("closed")
+        print("state: \(stateColor)  author: @\(issue.user.login)")
         print("created: \(ISO8601DateFormatter().string(from: issue.createdAt))")
         if !issue.labels.isEmpty {
             print("labels: \(issue.labels.map(\.name).joined(separator: ", "))")

@@ -28,8 +28,13 @@ struct PrView: AsyncParsableCommand {
             print(try CodableOutput.prettyJSON(pr))
             return
         }
-        print("#\(pr.number)  \(pr.title)")
-        print("state: \(pr.state.rawValue)\(pr.draft == true ? " (draft)" : "")  author: @\(pr.user.login)")
+        print("\(ANSI.bold("#\(pr.number)"))  \(ANSI.bold(pr.title))")
+        let stateColor: String
+        if pr.merged == true { stateColor = ANSI.magenta("merged") }
+        else if pr.state == .open { stateColor = ANSI.green("open") }
+        else { stateColor = ANSI.red("closed") }
+        let draftSuffix = pr.draft == true ? ANSI.dim(" (draft)") : ""
+        print("state: \(stateColor)\(draftSuffix)  author: @\(pr.user.login)")
         print("\(pr.head.ref) → \(pr.base.ref)")
         print("created: \(ISO8601DateFormatter().string(from: pr.createdAt))")
         if let merged = pr.merged, merged, let when = pr.mergedAt {

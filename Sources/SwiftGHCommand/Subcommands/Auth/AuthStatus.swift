@@ -23,26 +23,26 @@ struct AuthStatus: AsyncParsableCommand {
         print("\(config.host)")
 
         guard let token = config.token else {
-            print("  X Not logged in. Run `gh auth login` or set GH_TOKEN.")
+            print("  \(ANSI.red("✗")) Not logged in. Run `gh auth login` or set GH_TOKEN.")
             throw ExitCode(1)
         }
 
         let client = GraphQLClient(configuration: config)
         do {
             let result: ViewerQuery = try await client.query(ViewerQuery.query)
-            print("  ✓ Logged in to \(config.host) as \(result.viewer.login) (token from \(source.humanReadable))")
+            print("  \(ANSI.green("✓")) Logged in to \(ANSI.bold(config.host)) as \(ANSI.bold(result.viewer.login)) \(ANSI.dim("(token from \(source.humanReadable))"))")
             print("    URL: \(result.viewer.url.absoluteString)")
             if showToken {
                 print("    Token: \(token)")
             } else {
-                print("    Token: \(redact(token))")
+                print("    Token: \(ANSI.dim(redact(token)))")
             }
         } catch let APIError.unauthenticated(url) {
-            print("  X Token rejected by \(url.absoluteString) (HTTP 401).")
+            print("  \(ANSI.red("✗")) Token rejected by \(url.absoluteString) (HTTP 401).")
             print("    Source: \(source.humanReadable)")
             throw ExitCode(1)
         } catch {
-            print("  X Auth probe failed: \(error.localizedDescription)")
+            print("  \(ANSI.red("✗")) Auth probe failed: \(error.localizedDescription)")
             throw ExitCode(1)
         }
     }
