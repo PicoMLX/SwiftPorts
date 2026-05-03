@@ -45,6 +45,69 @@ like `https://gitlab.com/group/sub/repo/-/issues/123`. URL form
 overrides `--repo` and switches the API client to the URL's host
 automatically — same behaviour as upstream `glab`.
 
+### Merge-request surface
+
+```
+glab mr list                 --repo, --assignee, --author, --reviewer,
+                             --label, --milestone, --source-branch,
+                             --target-branch, --search, --all/--closed/
+                             --merged/--draft, --per-page, --page, --json
+glab mr view <id|!iid|url>   --repo, --web, --comments, --json
+glab mr create               --repo, --title (req), --description,
+                             --source-branch (default: cwd branch),
+                             --target-branch (default: project default),
+                             --label, --assignee, --reviewer, --milestone,
+                             --draft, --squash, --remove-source-branch, --json
+glab mr update <id>          --repo, --title, --description, --label/--unlabel,
+                             --assignee/--unassign, --reviewer, --milestone,
+                             --target-branch, --draft/--ready, --json
+                             (--draft + --title compose: "Draft: <title>")
+glab mr close <id>
+glab mr reopen <id>
+glab mr merge <id>           --squash, --remove-source-branch,
+                             --merge-commit-message, --squash-commit-message,
+                             --when-pipeline-succeeds, --json
+                             (alias: glab mr accept)
+glab mr approve <id>         (shows approval count after)
+glab mr unapprove <id>       (alias: glab mr revoke)
+glab mr note <id> -m "..."   (alias: glab mr comment)
+glab mr subscribe / unsubscribe <id>
+glab mr checkout <id>        --branch <local-name>, --remote (default: origin)
+                             fetches refs/merge-requests/<iid>/head and
+                             checks out via GitClient.fetch + checkout
+glab mr diff <id>            --web, --json
+                             colorised unified-diff print by default
+glab mr delete <id>
+```
+
+`<id>` accepts `123`, `!123`, `#123`, or a full URL like
+`https://gitlab.com/group/sub/repo/-/merge_requests/123`. URL form
+overrides `--repo` and switches the API client to the URL's host.
+
+### Repo (project) surface
+
+```
+glab repo view [<repo>]      --repo, --web, --json
+glab repo list               --hostname, --group <full-path>, --user,
+                             --owned, --starred, --membership,
+                             --visibility, --search, --per-page, --page, --json
+glab repo create <name>      --hostname, --group, --description,
+                             --visibility (default: private),
+                             --default-branch, --[no-]issues / --[no-]merge-requests
+                             / --[no-]wiki, --initialize-with-readme, --json
+glab repo clone <repo> [dir] --https
+                             SSH by default; falls back via `--https`
+glab repo fork <repo>        --namespace, --name, --path, --json
+glab repo archive [<repo>]
+glab repo unarchive [<repo>]
+glab repo delete [<repo>]    -y/--yes to skip the confirmation prompt
+                             (otherwise re-types the path to confirm)
+```
+
+`repo clone` and `mr checkout` shell out via `ForgeKit.ProcessGitClient`
+to invoke the user's `git` binary — gives them their actual ssh-agent,
+credential helper, and config for free.
+
 ### CI/CD surface
 
 ```
@@ -133,9 +196,7 @@ cwd remote.
 - **Editor-driven description / body editing** — upstream `glab` lets
   you pass `-d -` or omit `-t` to drop into `$EDITOR`. Not ported;
   pass the body inline via `-d "..."`.
-- **`glab mr ...`** — merge requests not implemented yet. The
-  underlying API client and Configuration are reusable.
-- **`glab repo ...`** — repos not implemented.
+- **`glab mr rebase`** — niche; the rest of the MR surface is in.
 - **Kanban board TUI** — `glab issue board` opens the board page in
   a browser (`https://<host>/<path>/-/boards`). The terminal kanban
   interface from upstream isn't ported.

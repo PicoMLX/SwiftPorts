@@ -159,4 +159,113 @@ import Testing
         let c = try CiCancel.parse(["1234"])
         #expect(c.pipelineId == 1234)
     }
+
+    // MARK: MR
+
+    @Test func mrListAcceptsFilters() throws {
+        let cmd = try MrList.parse([
+            "-R", "labs/sandbox",
+            "-l", "bug", "-l", "needs-review",
+            "--source-branch", "feature/x",
+            "--target-branch", "main",
+            "--merged",
+        ])
+        #expect(cmd.repo?.fullPath == "labs/sandbox")
+        #expect(cmd.labels == ["bug", "needs-review"])
+        #expect(cmd.sourceBranch == "feature/x")
+        #expect(cmd.targetBranch == "main")
+        #expect(cmd.merged == true)
+    }
+
+    @Test func mrCreateRequiresTitle() {
+        #expect(throws: (any Error).self) {
+            _ = try MrCreate.parse([])
+        }
+    }
+
+    @Test func mrCreateAccepts() throws {
+        let cmd = try MrCreate.parse([
+            "-t", "Add HELLO.md",
+            "-d", "test body",
+            "-s", "feature/hello",
+            "-b", "main",
+            "-l", "smoke",
+            "--draft",
+        ])
+        #expect(cmd.title == "Add HELLO.md")
+        #expect(cmd.sourceBranch == "feature/hello")
+        #expect(cmd.targetBranch == "main")
+        #expect(cmd.draft == true)
+    }
+
+    @Test func mrUpdateAcceptsDraftAndReady() throws {
+        let d = try MrUpdate.parse(["1", "--draft"])
+        #expect(d.draft == true)
+        let r = try MrUpdate.parse(["1", "--ready"])
+        #expect(r.ready == true)
+    }
+
+    @Test func mrMergeFlags() throws {
+        let cmd = try MrMerge.parse([
+            "1", "--squash", "--remove-source-branch",
+            "--merge-commit-message", "merge msg",
+        ])
+        #expect(cmd.squash == true)
+        #expect(cmd.removeSourceBranch == true)
+        #expect(cmd.mergeCommitMessage == "merge msg")
+    }
+
+    @Test func mrCheckoutDefaults() throws {
+        let cmd = try MrCheckout.parse(["1"])
+        #expect(cmd.remote == "origin")
+    }
+
+    @Test func mrDiffWebFlag() throws {
+        let cmd = try MrDiff.parse(["1", "-w"])
+        #expect(cmd.web == true)
+    }
+
+    // MARK: Repo
+
+    @Test func repoCreateAccepts() throws {
+        let cmd = try RepoCreate.parse([
+            "test-thing",
+            "-h", "git.cocoanetics.com",
+            "-g", "labs",
+            "--visibility", "private",
+            "--initialize-with-readme",
+        ])
+        #expect(cmd.name == "test-thing")
+        #expect(cmd.hostname == "git.cocoanetics.com")
+        #expect(cmd.group == "labs")
+        #expect(cmd.visibility == "private")
+        #expect(cmd.initializeWithReadme == true)
+    }
+
+    @Test func repoListGroupAndOwnedFlags() throws {
+        let cmd = try RepoList.parse([
+            "-g", "labs", "--owned", "-P", "50",
+        ])
+        #expect(cmd.group == "labs")
+        #expect(cmd.owned == true)
+        #expect(cmd.perPage == 50)
+    }
+
+    @Test func repoCloneArgsAndFlag() throws {
+        let cmd = try RepoClone.parse(["labs/glab-sandbox", "/tmp/dest", "--https"])
+        #expect(cmd.project.fullPath == "labs/glab-sandbox")
+        #expect(cmd.directory == "/tmp/dest")
+        #expect(cmd.https == true)
+    }
+
+    @Test func repoForkOptional() throws {
+        let cmd = try RepoFork.parse(["src/repo", "-g", "labs"])
+        #expect(cmd.project.fullPath == "src/repo")
+        #expect(cmd.namespace == "labs")
+    }
+
+    @Test func repoDeleteRequiresYesOrConfirm() throws {
+        let cmd = try RepoDelete.parse(["-R", "labs/x", "-y"])
+        #expect(cmd.yes == true)
+    }
 }

@@ -9,7 +9,9 @@ public struct GlabCommand: AsyncParsableCommand {
             VersionCommand.self,
             AuthCommand.self,
             IssueCommand.self,
+            MrCommand.self,
             CiCommand.self,
+            RepoCommand.self,
         ]
     )
 

@@ -16,6 +16,7 @@ history, and one test runner.
 | `GhCommand`    | `gh`   | The `gh` subcommand tree — built on top of `GitHub` + `ForgeKit`. SwiftBash extends `GhCommand` to register the whole tree as a Bash builtin. |
 | `GitLab`       | —      | GitLab SDK: REST API client (`X-Next-Page` pagination, Bearer auth, `gitlab.com` and self-hosted instances), Codable models, `RepositoryReference` with nested-subgroup support. No ArgumentParser dependency. |
 | `GlabCommand`  | `glab` | The `glab` subcommand tree — built on top of `GitLab` + `ForgeKit`. Today: `issue list / view / create / close / reopen / note / subscribe / unsubscribe / delete`. |
+| `Git`          | —      | In-process `GitClient` impl backed by libgit2 1.9.x (vendored from `ibrahimcetin/libgit2` SwiftPM package). Drop-in replacement for `ForgeKit`'s `ProcessGitClient` — no `git` binary required. |
 
 ## Build, test, run
 
@@ -71,6 +72,9 @@ Sources/
     GlabCommand/                        target "GlabCommand" (Subcommands/Issue/, glue)
     glab/                               target "glab"        (exec)
 
+  Git/                               libgit2-backed GitClient
+    Lib/                                target "Git"         (Libgit2GitClient)
+
 Tests/
   ForgeKitTests/      — IO, Git, Secret store primitives (folded into GitHubTests today)
   ZipKitTests/        — Archive round-trips, GlobMatcher
@@ -86,6 +90,8 @@ Tests/
     *Tests/           — SDK decode, RepositoryReference parsing, Configuration,
                        IssueArgument parsing — depends on "GitLab",
                        "GlabCommand", "ForgeKit"
+  GitTests/           — Libgit2GitClient round-trip against tmp repos
+                       (depends on "Git", "ForgeKit")
 ```
 
 ## Naming conventions
@@ -161,9 +167,12 @@ cycle. SwiftBash never depends on an executable target.
 Detailed status, command inventory, and GitLab-specific conventions:
 see [Docs/GitLab.md](Docs/GitLab.md). Today's surface: full `glab
 issue` (list / view / create / update / close / reopen / note /
-subscribe / unsubscribe / delete / board), `glab ci` (list / view /
-trace / status / retry / cancel / run), and `glab auth` (status /
-login / logout / token, PAT-based).
+subscribe / unsubscribe / delete / board), full `glab mr` (list / view
+/ create / update / close / reopen / merge / approve / unapprove / note
+/ subscribe / unsubscribe / checkout / diff / delete), `glab ci` (list
+/ view / trace / status / retry / cancel / run), `glab repo` (view /
+list / create / clone / fork / archive / unarchive / delete), and
+`glab auth` (status / login / logout / token, PAT-based).
 
 ## GitHub / `gh` specifics
 
