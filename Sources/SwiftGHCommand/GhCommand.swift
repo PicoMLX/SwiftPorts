@@ -7,6 +7,7 @@ public struct GhCommand: AsyncParsableCommand {
         version: "0.1.0-dev",
         subcommands: [
             VersionCommand.self,
+            AuthCommand.self,
             ApiCommand.self,
             RepoCommand.self,
             ReleaseCommand.self,

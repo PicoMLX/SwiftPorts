@@ -42,6 +42,22 @@ struct LiveAPITests {
         #expect(result.totalCount > 0)
         #expect(!result.items.isEmpty)
     }
+
+    /// Requires a token (so requires an authenticated env: SWIFTGH_LIVE
+    /// with GH_TOKEN/GITHUB_TOKEN). Hits the GraphQL endpoint with a
+    /// trivial viewer{} query.
+    @Test func graphQLViewer() async throws {
+        let config = Configuration.live()
+        guard config.token != nil else {
+            // Soft-skip: GraphQL endpoint requires auth.
+            print("[skip] no token in env; can't probe GraphQL viewer{}")
+            return
+        }
+        let client = GraphQLClient(configuration: config)
+        let result: ViewerQuery = try await client.query(ViewerQuery.query)
+        #expect(!result.viewer.login.isEmpty)
+        print("[live] graphQL viewer login: \(result.viewer.login)")
+    }
 }
 
 extension Tag {

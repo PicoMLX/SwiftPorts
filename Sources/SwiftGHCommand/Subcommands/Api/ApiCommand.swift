@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import HTTPTypes
 import SwiftGHCore
 
 struct ApiCommand: AsyncParsableCommand {
@@ -48,7 +49,9 @@ struct ApiCommand: AsyncParsableCommand {
         if let h = hostname { config.host = h }
         let client = APIClient(configuration: config)
 
-        guard let httpMethod = HTTPMethod(rawValue: method.uppercased()) else {
+        let httpMethod = HTTPRequest.Method(method.uppercased())
+            ?? HTTPRequest.Method(method)
+        guard let httpMethod else {
             throw ValidationError("Unsupported method: \(method)")
         }
 

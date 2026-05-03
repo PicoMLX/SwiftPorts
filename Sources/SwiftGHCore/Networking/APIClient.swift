@@ -1,4 +1,6 @@
 import Foundation
+import HTTPTypes
+import HTTPTypesFoundation
 import Logging
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -6,9 +8,13 @@ import FoundationNetworking
 
 /// Minimal GitHub REST/GraphQL client.
 ///
-/// Mirrors what the upstream `gh` does in `api/client.go` +
+/// Mirrors what upstream `gh` does in `api/client.go` +
 /// `api/http_client.go`, stripped to the parts the no-auth surface
 /// needs: pagination, rate-limit awareness, JSON decoding.
+///
+/// Built on `swift-http-types`: requests are `HTTPRequest`,
+/// responses are `HTTPResponse`. `URLSession` is reached only via
+/// `HTTPTypesFoundation`'s `data(for: HTTPRequest)` convenience.
 public actor APIClient {
     public let configuration: Configuration
     private let session: URLSession
@@ -62,11 +68,11 @@ public actor APIClient {
     /// Low-level entry: arbitrary method, raw body, raw response. Used
     /// by `gh api` and by anything that needs Link/headers visibility.
     public func raw(
-        method: HTTPMethod,
+        method: HTTPRequest.Method,
         path: String,
         query: [URLQueryItem] = [],
         body: Data? = nil,
-        extraHeaders: [String: String] = [:]
+        extraHeaders: HTTPFields = [:]
     ) async throws -> APIResponse {
         let url = makeURL(path: path, query: query)
         return try await perform(
@@ -96,57 +102,52 @@ public actor APIClient {
     // MARK: HTTP
 
     private func perform(
-        method: HTTPMethod,
+        method: HTTPRequest.Method,
         url: URL,
         body: Data?,
-        extraHeaders: [String: String] = [:]
+        extraHeaders: HTTPFields = [:]
     ) async throws -> APIResponse {
-        var request = URLRequest(url: url)
-        request.httpMethod = method.rawValue
-        request.httpBody = body
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue(configuration.userAgent, forHTTPHeaderField: "User-Agent")
+        var request = HTTPRequest(method: method, url: url)
+        request.headerFields[.accept] = "application/vnd.github+json"
+        request.headerFields[.gitHubAPIVersion] = "2022-11-28"
+        request.headerFields[.userAgent] = configuration.userAgent
         if let token = configuration.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.headerFields[.authorization] = "Bearer \(token)"
         }
         if body != nil {
-            request.setValue("application/json; charset=utf-8",
-                             forHTTPHeaderField: "Content-Type")
+            request.headerFields[.contentType] = "application/json; charset=utf-8"
         }
-        for (k, v) in extraHeaders {
-            request.setValue(v, forHTTPHeaderField: k)
+        for field in extraHeaders {
+            request.headerFields[field.name] = field.value
         }
 
         logger.debug("HTTP \(method.rawValue) \(url.absoluteString)")
 
-        let (data, urlResponse): (Data, URLResponse)
+        let (data, response): (Data, HTTPResponse)
         do {
-            (data, urlResponse) = try await session.data(for: request)
+            if let body {
+                (data, response) = try await session.upload(for: request, from: body)
+            } else {
+                (data, response) = try await session.data(for: request)
+            }
         } catch {
             throw APIError.transport(underlying: error)
         }
 
-        guard let http = urlResponse as? HTTPURLResponse else {
-            throw APIError.transport(
-                underlying: NSError(domain: "SwiftGH", code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "non-HTTP response"]))
-        }
-
-        let nextPage = http.value(forHTTPHeaderField: "Link")
+        let nextPage = response.headerFields[.link]
             .flatMap { LinkHeader.url(for: "next", in: $0) }
-        let remaining = http.value(forHTTPHeaderField: "X-RateLimit-Remaining")
+        let remaining = response.headerFields[.rateLimitRemaining]
             .flatMap(Int.init)
-        let resetAt = http.value(forHTTPHeaderField: "X-RateLimit-Reset")
+        let resetAt = response.headerFields[.rateLimitReset]
             .flatMap(TimeInterval.init)
             .map { Date(timeIntervalSince1970: $0) }
-        let contentType = http.value(forHTTPHeaderField: "Content-Type")
+        let contentType = response.headerFields[.contentType]
 
         logger.debug(
-            "HTTP \(http.statusCode) (\(data.count) bytes; rate-remaining=\(remaining.map(String.init) ?? "?"))")
+            "HTTP \(response.status.code) (\(data.count) bytes; rate-remaining=\(remaining.map(String.init) ?? "?"))")
 
-        let response = APIResponse(
-            status: http.statusCode,
+        let apiResponse = APIResponse(
+            status: response.status.code,
             body: data,
             nextPageURL: nextPage,
             rateLimitRemaining: remaining,
@@ -155,8 +156,8 @@ public actor APIClient {
             url: url
         )
 
-        try checkStatus(response)
-        return response
+        try checkStatus(apiResponse)
+        return apiResponse
     }
 
     // MARK: Status mapping
@@ -191,4 +192,13 @@ public actor APIClient {
             throw APIError.decoding(underlying: error, url: r.url)
         }
     }
+}
+
+// MARK: GitHub-specific header field names
+
+extension HTTPField.Name {
+    static let gitHubAPIVersion = HTTPField.Name("X-GitHub-Api-Version")!
+    static let rateLimitRemaining = HTTPField.Name("X-RateLimit-Remaining")!
+    static let rateLimitReset = HTTPField.Name("X-RateLimit-Reset")!
+    static let link = HTTPField.Name("Link")!
 }
