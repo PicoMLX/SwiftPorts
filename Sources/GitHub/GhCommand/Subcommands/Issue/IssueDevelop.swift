@@ -81,7 +81,7 @@ struct IssueDevelop: AsyncParsableCommand {
         print("\(ANSI.green("✓")) Created branch \(createdName) linked to #\(number)")
 
         if checkout {
-            let git = ProcessGitClient()
+            let git = CommandContext.gitClient()
             try await git.fetch(remote: "origin", refspec: createdName)
             try await git.checkout(ref: createdName)
             print("\(ANSI.green("✓")) Checked out \(createdName)")

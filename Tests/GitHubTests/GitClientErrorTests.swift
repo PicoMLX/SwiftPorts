@@ -22,6 +22,12 @@ import Testing
             try await git.addRemote(name: "origin",
                                     url: URL(string: "https://example.com/x.git")!)
         }
+        await #expect(throws: GitClientError.self) {
+            try await git.add(paths: [])
+        }
+        await #expect(throws: GitClientError.self) {
+            _ = try await git.commit(message: "x", author: nil, allowEmpty: false)
+        }
     }
 
     @Test func noGitClientReadsReturnNil() async throws {

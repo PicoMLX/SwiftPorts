@@ -26,6 +26,10 @@ private struct StubGitClient: GitClient {
     func addRemote(name: String, url: URL) async throws {
         fatalError("not used in tests")
     }
+    func add(paths: [String]) async throws { fatalError("not used in tests") }
+    func commit(message: String, author: GitSignature?, allowEmpty: Bool) async throws -> String {
+        fatalError("not used in tests")
+    }
 }
 
 @Suite struct RepositoryResolverTests {

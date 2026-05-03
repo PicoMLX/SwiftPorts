@@ -99,7 +99,7 @@ struct RepoCreate: AsyncParsableCommand {
 
         if clone {
             let cloneURL = URL(string: "\(repo.htmlUrl.absoluteString).git")!
-            let git = ProcessGitClient()
+            let git = CommandContext.gitClient()
             try await git.clone(url: cloneURL, directory: nil)
             print("\(ANSI.green("✓")) Cloned to ./\(repo.name)")
         }

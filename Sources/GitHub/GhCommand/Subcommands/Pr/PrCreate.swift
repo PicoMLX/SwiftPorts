@@ -48,7 +48,7 @@ struct PrCreate: AsyncParsableCommand {
 
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
-        let git = ProcessGitClient()
+        let git = CommandContext.gitClient()
 
         let resolvedHead: String
         if let head { resolvedHead = head }

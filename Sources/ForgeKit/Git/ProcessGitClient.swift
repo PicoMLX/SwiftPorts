@@ -71,6 +71,34 @@ public struct ProcessGitClient: GitClient {
         try await runOrThrow(["remote", "add", name, url.absoluteString])
     }
 
+    public func add(paths: [String]) async throws {
+        if paths.isEmpty {
+            try await runOrThrow(["add", "-A"])
+        } else {
+            try await runOrThrow(["add", "--"] + paths)
+        }
+    }
+
+    @discardableResult
+    public func commit(message: String, author: GitSignature?, allowEmpty: Bool) async throws -> String {
+        // Mirror libgit2's "stage everything then commit" semantics with
+        // `git add -A` so both impls behave the same to the caller.
+        try await runOrThrow(["add", "-A"])
+
+        var args = ["commit", "-m", message]
+        if allowEmpty { args.append("--allow-empty") }
+        if let author { args.append(contentsOf: ["--author", "\(author.name) <\(author.email)>"]) }
+        try await runOrThrow(args)
+
+        let result = try await runGit(["rev-parse", "HEAD"])
+        guard result.exitCode == 0 else {
+            throw GitClientError.gitFailed(
+                args: ["rev-parse", "HEAD"],
+                exitCode: result.exitCode, stderr: result.stderr)
+        }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: Process invocation
 
     struct ProcessResult: Sendable {

@@ -33,7 +33,7 @@ struct PrCheckout: AsyncParsableCommand {
             "repos/\(target.slug)/pulls/\(number)")
 
         let localBranch = branch ?? "pr-\(number)"
-        let git = ProcessGitClient()
+        let git = CommandContext.gitClient()
 
         // Same-repo PR: fetch from origin's pull/N/head.
         // Cross-fork PR: fetch from head.repo's clone URL by HEAD branch.

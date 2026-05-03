@@ -9,7 +9,7 @@ enum RepositoryResolver {
     static func resolve(
         flag: RepositoryReference? = nil,
         positional: RepositoryReference? = nil,
-        gitClient: any GitClient = ProcessGitClient()
+        gitClient: any GitClient = CommandContext.gitClient()
     ) async throws -> RepositoryReference {
         if let positional { return positional }
         if let flag { return flag }

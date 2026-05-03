@@ -16,7 +16,8 @@ history, and one test runner.
 | `GhCommand`    | `gh`   | The `gh` subcommand tree — built on top of `GitHub` + `ForgeKit`. SwiftBash extends `GhCommand` to register the whole tree as a Bash builtin. |
 | `GitLab`       | —      | GitLab SDK: REST API client (`X-Next-Page` pagination, Bearer auth, `gitlab.com` and self-hosted instances), Codable models, `RepositoryReference` with nested-subgroup support. No ArgumentParser dependency. |
 | `GlabCommand`  | `glab` | The `glab` subcommand tree — built on top of `GitLab` + `ForgeKit`. Today: `issue list / view / create / close / reopen / note / subscribe / unsubscribe / delete`. |
-| `Git`          | —      | In-process `GitClient` impl backed by libgit2 1.9.x (vendored from `ibrahimcetin/libgit2` SwiftPM package). Drop-in replacement for `ForgeKit`'s `ProcessGitClient` — no `git` binary required. |
+| `SwiftGit`     | —      | In-process `GitClient` impl backed by libgit2 1.9.x (vendored from `ibrahimcetin/libgit2` SwiftPM package). Drop-in replacement for `ForgeKit`'s `ProcessGitClient` — no system `git` binary required. HTTPS auth via `CredentialProvider` callback. Named `SwiftGit` (not `Git`) so its build artifacts don't case-fold-collide with the lowercase `git` exec on macOS. |
+| `GitCommand`   | `git`  | The `git` subcommand tree — `clone / fetch / pull {--rebase} / checkout / push / add / commit / merge {--ff,--no-ff,--ff-only} / rebase {<upstream>,--continue,--skip,--abort,--onto} / diff / stash {push,list,apply,pop,drop,clear,show,branch} / remote add / remote get-url / branch / version`. Output and exit-code semantics mirror real git for every supported case. SwiftBash can register `GitCommand` as the `git` builtin to shadow system git. |
 
 ## Build, test, run
 
@@ -25,6 +26,7 @@ swift build                              # builds everything
 swift test                               # all targets, all tests (156 today)
 swift run gh ...                         # GitHub CLI
 swift run glab ...                       # GitLab CLI
+swift run git ...                        # libgit2-backed git CLI
 swift run zip ...                        # zip(1)
 swift run unzip ...                      # unzip(1)
 ```
@@ -72,8 +74,10 @@ Sources/
     GlabCommand/                        target "GlabCommand" (Subcommands/Issue/, glue)
     glab/                               target "glab"        (exec)
 
-  Git/                               libgit2-backed GitClient
-    Lib/                                target "Git"         (Libgit2GitClient)
+  SwiftGit/                          libgit2-backed GitClient + git CLI
+    Lib/                                target "SwiftGit"    (Libgit2GitClient)
+    GitCommand/                         target "GitCommand"  (Subcommands/, Subcommands/Remote/)
+    git/                                target "git"         (exec)
 
 Tests/
   ForgeKitTests/      — IO, Git, Secret store primitives (folded into GitHubTests today)
@@ -90,8 +94,9 @@ Tests/
     *Tests/           — SDK decode, RepositoryReference parsing, Configuration,
                        IssueArgument parsing — depends on "GitLab",
                        "GlabCommand", "ForgeKit"
-  GitTests/           — Libgit2GitClient round-trip against tmp repos
-                       (depends on "Git", "ForgeKit")
+  SwiftGitTests/      — Libgit2GitClient + Credentials bridge round-trips
+                       (depends on "SwiftGit", "ForgeKit")
+  GitCommandTests/    — git argv parsing (depends on "GitCommand")
 ```
 
 ## Naming conventions

@@ -45,6 +45,14 @@ let package = Package(
         .library(name: "GitLab", targets: ["GitLab"]),
         .library(name: "GlabCommand", targets: ["GlabCommand"]),
         .executable(name: "glab", targets: ["glab"]),
+
+        // SwiftGit umbrella — libgit2-backed `GitClient` SDK + `git` CLI.
+        // SDK lib is named `SwiftGit` (matching the umbrella folder) so
+        // its `SwiftGit.build` artifact directory doesn't case-fold-collide
+        // with `git.build` on macOS's case-insensitive filesystem.
+        .library(name: "SwiftGit", targets: ["SwiftGit"]),
+        .library(name: "GitCommand", targets: ["GitCommand"]),
+        .executable(name: "git", targets: ["git"]),
     ],
     dependencies: [
         // Apple / swiftlang
@@ -65,6 +73,13 @@ let package = Package(
                  from: "6.0.0"),
         .package(url: "https://github.com/weichsel/ZIPFoundation",
                  from: "0.9.19"),
+
+        // libgit2 1.9.x packaged as a SwiftPM C target — fork of upstream
+        // with a Package.swift that compiles libgit2 from source. We
+        // depend only on the C library; the Swift wrapper is ours
+        // (Sources/Git/Lib).
+        .package(url: "https://github.com/ibrahimcetin/libgit2",
+                 from: "1.9.2"),
     ],
     targets: [
         // MARK: ForgeKit (host-agnostic plumbing)
@@ -140,6 +155,7 @@ let package = Package(
             dependencies: [
                 "GitHub",
                 "ForgeKit",
+                "SwiftGit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/GitHub/GhCommand"
@@ -188,6 +204,39 @@ let package = Package(
             resources: [
                 .copy("Fixtures"),
             ]
+        ),
+
+        // MARK: SwiftGit umbrella (libgit2-backed GitClient + `git` CLI)
+        .target(
+            name: "SwiftGit",
+            dependencies: [
+                "ForgeKit",
+                .product(name: "libgit2", package: "libgit2"),
+            ],
+            path: "Sources/SwiftGit/Lib"
+        ),
+        .target(
+            name: "GitCommand",
+            dependencies: [
+                "SwiftGit",
+                "ForgeKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "libgit2", package: "libgit2"),
+            ],
+            path: "Sources/SwiftGit/GitCommand"
+        ),
+        .executableTarget(
+            name: "git",
+            dependencies: ["GitCommand"],
+            path: "Sources/SwiftGit/git"
+        ),
+        .testTarget(
+            name: "SwiftGitTests",
+            dependencies: ["SwiftGit", "ForgeKit"]
+        ),
+        .testTarget(
+            name: "GitCommandTests",
+            dependencies: ["GitCommand", "SwiftGit", "ForgeKit"]
         ),
     ]
 )

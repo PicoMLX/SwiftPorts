@@ -24,6 +24,31 @@ public protocol GitClient: Sendable {
     func checkout(ref: String) async throws
     func push(remote: String, refspec: String, setUpstream: Bool) async throws
     func addRemote(name: String, url: URL) async throws
+
+    /// Stage paths into the index. Empty `paths` means "stage everything"
+    /// (mirrors `git add -A`). Each entry is a pathspec relative to the
+    /// repository root — globs work as in plain `git add`.
+    func add(paths: [String]) async throws
+
+    /// Stage all changes (add + remove) and create a commit on HEAD.
+    ///
+    /// `author` is `nil` to use the repo's configured `user.name` /
+    /// `user.email`. `allowEmpty == false` matches `git commit`'s default
+    /// behaviour: refuse when the index has no changes against HEAD.
+    /// Returns the new commit's full SHA.
+    @discardableResult
+    func commit(message: String, author: GitSignature?, allowEmpty: Bool) async throws -> String
+}
+
+/// Author / committer identity passed to ``GitClient/commit(message:author:allowEmpty:)``.
+public struct GitSignature: Sendable, Equatable {
+    public let name: String
+    public let email: String
+
+    public init(name: String, email: String) {
+        self.name = name
+        self.email = email
+    }
 }
 
 /// Errors thrown by ``GitClient`` write paths.

@@ -30,4 +30,13 @@ public struct NoGitClient: GitClient {
     public func addRemote(name: String, url: URL) async throws {
         throw GitClientError.gitUnavailable
     }
+
+    public func add(paths: [String]) async throws {
+        throw GitClientError.gitUnavailable
+    }
+
+    @discardableResult
+    public func commit(message: String, author: GitSignature?, allowEmpty: Bool) async throws -> String {
+        throw GitClientError.gitUnavailable
+    }
 }
