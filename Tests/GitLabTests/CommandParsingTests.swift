@@ -306,4 +306,98 @@ import Testing
         #expect(cmd.boardId == 28)
         #expect(cmd.yes == true)
     }
+
+    // MARK: Release
+
+    @Test func releaseListLimitFlag() throws {
+        let cmd = try ReleaseList.parse(["-R", "g/r", "-l", "5"])
+        #expect(cmd.repo?.fullPath == "g/r")
+        #expect(cmd.limit == 5)
+    }
+
+    @Test func releaseViewRequiresTag() {
+        #expect(throws: (any Error).self) {
+            _ = try ReleaseView.parse([])
+        }
+    }
+
+    @Test func releaseCreateRequiresTagAndAcceptsFlags() throws {
+        let cmd = try ReleaseCreate.parse([
+            "v1.0.0",
+            "--name", "First Stable",
+            "-n", "Body of the release notes",
+            "--ref", "main",
+        ])
+        #expect(cmd.tagName == "v1.0.0")
+        #expect(cmd.name == "First Stable")
+        #expect(cmd.notes == "Body of the release notes")
+        #expect(cmd.ref == "main")
+    }
+
+    @Test func releaseDeleteRequiresTag() throws {
+        let cmd = try ReleaseDelete.parse(["v1.0.0"])
+        #expect(cmd.tagName == "v1.0.0")
+    }
+
+    // MARK: Tag
+
+    @Test func tagListSearchAndLimit() throws {
+        let cmd = try TagList.parse(["-s", "rc", "-l", "10"])
+        #expect(cmd.search == "rc")
+        #expect(cmd.limit == 10)
+    }
+
+    @Test func tagCreateAnnotated() throws {
+        let cmd = try TagCreate.parse([
+            "v0.1.0",
+            "main",
+            "-m", "first dev tag",
+        ])
+        #expect(cmd.tagName == "v0.1.0")
+        #expect(cmd.ref == "main")
+        #expect(cmd.message == "first dev tag")
+    }
+
+    @Test func tagCreateLightweight() throws {
+        let cmd = try TagCreate.parse(["v0.0.1"])
+        #expect(cmd.tagName == "v0.0.1")
+        #expect(cmd.ref == nil)
+        #expect(cmd.message == nil)
+    }
+
+    @Test func tagDeleteRequiresName() throws {
+        let cmd = try TagDelete.parse(["v0.1.0"])
+        #expect(cmd.tagName == "v0.1.0")
+    }
+
+    // MARK: Variable
+
+    @Test func variableListShowValuesFlag() throws {
+        let cmd = try VariableList.parse(["--show-values"])
+        #expect(cmd.showValues == true)
+    }
+
+    @Test func variableSetRequiresKeyAndValue() {
+        #expect(throws: (any Error).self) {
+            _ = try VariableSet.parse(["KEY"])
+        }
+    }
+
+    @Test func variableSetWithFlags() throws {
+        let cmd = try VariableSet.parse([
+            "API_TOKEN", "secret",
+            "-p", "-m",
+            "--scope", "production",
+        ])
+        #expect(cmd.key == "API_TOKEN")
+        #expect(cmd.value == "secret")
+        #expect(cmd.protected == true)
+        #expect(cmd.masked == true)
+        #expect(cmd.scope == "production")
+    }
+
+    @Test func variableUnsetRequiresKey() throws {
+        let cmd = try VariableUnset.parse(["API_TOKEN"])
+        #expect(cmd.key == "API_TOKEN")
+    }
 }
