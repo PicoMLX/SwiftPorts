@@ -45,6 +45,31 @@ like `https://gitlab.com/group/sub/repo/-/issues/123`. URL form
 overrides `--repo` and switches the API client to the URL's host
 automatically — same behaviour as upstream `glab`.
 
+### CI/CD surface
+
+```
+glab ci list                  --repo, --status, --ref, --source, --per-page,
+                              --page, --json
+glab ci view [<id>]           --repo, --branch, --web, --json
+                              (no <id> → latest pipeline on resolved branch)
+glab ci trace <id|name>       --repo, --branch, --poll-interval, --no-follow
+                              streams a job log via Range: bytes=N-
+glab ci status                --repo, --branch, --poll-interval, --once
+                              live one-line status; refresh until terminal
+glab ci retry [<id>]          --repo, --branch
+glab ci cancel [<id>]         --repo, --branch
+glab ci run                   --repo, --branch, -v KEY=VALUE (repeatable)
+```
+
+`<id>` defaults to "latest pipeline for the resolved branch" everywhere.
+The branch resolves: `--branch` flag > cwd's `currentBranch` from
+`ProcessGitClient`. `glab ci trace` accepts either a numeric job ID or
+a job name (matched against the latest pipeline's jobs).
+
+`ci status` and `ci trace` exit with code 1 when the underlying
+pipeline / job ends in `failed`, mirroring `gh run watch
+--exit-status`.
+
 ### Auth surface
 
 ```
@@ -114,10 +139,14 @@ cwd remote.
 - **Kanban board TUI** — `glab issue board` opens the board page in
   a browser (`https://<host>/<path>/-/boards`). The terminal kanban
   interface from upstream isn't ported.
-- **`glab ci ...`** (pipelines), `glab release ...`, `glab snippet
-  ...`, `glab variable ...`, `glab schedule ...`, `glab cluster ...`,
-  `glab incident ...`, `glab token ...` — all upstream surfaces
-  beyond issues + auth.
+- **`glab ci config / lint / artifact / delete / get / trigger`** —
+  the rest of the CI surface beyond list/view/trace/status/retry/
+  cancel/run.
+- **`glab schedule`** — pipeline schedules.
+- **`glab runner`** — runner administration.
+- **`glab release ...`**, `glab snippet ...`, `glab variable ...`,
+  `glab cluster ...`, `glab incident ...`, `glab token ...` — all
+  upstream surfaces beyond issues + auth + ci.
 
 ## Testing
 

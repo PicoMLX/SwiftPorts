@@ -34,7 +34,7 @@ struct IssueView: AsyncParsableCommand {
         if let fromURL = parsed.repoFromURL {
             target = fromURL
         } else {
-            target = try await RepositoryResolver.resolve(flag: repo)
+            target = try await CommandContext.resolveRepo(flag: repo)
         }
 
         let client = try await CommandContext.apiClient(host: target.host)

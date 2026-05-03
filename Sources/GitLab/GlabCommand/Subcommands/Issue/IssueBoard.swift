@@ -28,7 +28,7 @@ struct IssueBoardView: AsyncParsableCommand {
     var repo: RepositoryReference?
 
     func run() async throws {
-        let target = try await RepositoryResolver.resolve(flag: repo)
+        let target = try await CommandContext.resolveRepo(flag: repo)
         let host = target.host ?? Configuration.defaultHost
         guard let url = URL(string: "https://\(host)/\(target.fullPath)/-/boards") else {
             throw BoardError.invalidURL

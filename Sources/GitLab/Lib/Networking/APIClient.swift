@@ -99,6 +99,22 @@ public actor APIClient {
             body: nil)
     }
 
+    /// Low-level entry: arbitrary method, raw body, raw response. Use
+    /// when the endpoint isn't JSON (e.g. GitLab's job-trace
+    /// `text/plain` stream) or when callers need response headers
+    /// directly. Body decoding is the caller's responsibility.
+    public func raw(
+        method: HTTPRequest.Method,
+        path: String,
+        query: [URLQueryItem] = [],
+        body: Data? = nil,
+        extraHeaders: HTTPFields = [:]
+    ) async throws -> APIResponse {
+        let url = makeURL(path: path, query: query)
+        return try await perform(
+            method: method, url: url, body: body, extraHeaders: extraHeaders)
+    }
+
     // MARK: URL building
 
     func makeURL(path: String, query: [URLQueryItem]) -> URL {

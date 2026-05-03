@@ -161,8 +161,9 @@ cycle. SwiftBash never depends on an executable target.
 Detailed status, command inventory, and GitLab-specific conventions:
 see [Docs/GitLab.md](Docs/GitLab.md). Today's surface: full `glab
 issue` (list / view / create / update / close / reopen / note /
-subscribe / unsubscribe / delete / board) plus `glab auth`
-(status / login / logout / token, PAT-based).
+subscribe / unsubscribe / delete / board), `glab ci` (list / view /
+trace / status / retry / cancel / run), and `glab auth` (status /
+login / logout / token, PAT-based).
 
 ## GitHub / `gh` specifics
 

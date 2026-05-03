@@ -59,7 +59,7 @@ struct IssueList: AsyncParsableCommand {
     var json: Bool = false
 
     func run() async throws {
-        let target = try await RepositoryResolver.resolve(flag: repo)
+        let target = try await CommandContext.resolveRepo(flag: repo)
         let client = try await CommandContext.apiClient(host: target.host)
 
         var query: [URLQueryItem] = []

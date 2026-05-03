@@ -100,4 +100,63 @@ import Testing
         let cmd = try AuthLogin.parse(["--with-token"])
         #expect(cmd.withToken == true)
     }
+
+    @Test func ciListAcceptsFilters() throws {
+        let cmd = try CiList.parse([
+            "-R", "labs/AgentCorp",
+            "-s", "failed",
+            "--ref", "main",
+            "--source", "push",
+            "-P", "10",
+        ])
+        #expect(cmd.repo?.fullPath == "labs/AgentCorp")
+        #expect(cmd.status == "failed")
+        #expect(cmd.ref == "main")
+        #expect(cmd.source == "push")
+        #expect(cmd.perPage == 10)
+    }
+
+    @Test func ciViewPipelineIDOptional() throws {
+        let bare = try CiView.parse([])
+        #expect(bare.pipelineId == nil)
+        let withId = try CiView.parse(["1234"])
+        #expect(withId.pipelineId == 1234)
+    }
+
+    @Test func ciTraceRequiresJob() {
+        #expect(throws: (any Error).self) {
+            _ = try CiTrace.parse([])
+        }
+    }
+
+    @Test func ciTraceAcceptsJobNameOrID() throws {
+        let byID = try CiTrace.parse(["123456"])
+        #expect(byID.job == "123456")
+        let byName = try CiTrace.parse(["lint"])
+        #expect(byName.job == "lint")
+    }
+
+    @Test func ciStatusFlags() throws {
+        let cmd = try CiStatus.parse(["--once", "-b", "main", "--poll-interval", "5"])
+        #expect(cmd.once == true)
+        #expect(cmd.branch == "main")
+        #expect(cmd.pollInterval == 5)
+    }
+
+    @Test func ciRunVariablesRepeatable() throws {
+        let cmd = try CiRun.parse([
+            "-v", "FOO=bar",
+            "-v", "BAZ=qux",
+            "-b", "main",
+        ])
+        #expect(cmd.variables == ["FOO=bar", "BAZ=qux"])
+        #expect(cmd.branch == "main")
+    }
+
+    @Test func ciRetryAndCancelAcceptID() throws {
+        let r = try CiRetry.parse(["1234"])
+        #expect(r.pipelineId == 1234)
+        let c = try CiCancel.parse(["1234"])
+        #expect(c.pipelineId == 1234)
+    }
 }
