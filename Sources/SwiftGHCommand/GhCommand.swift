@@ -15,6 +15,9 @@ public struct GhCommand: AsyncParsableCommand {
             PrCommand.self,
             SearchCommand.self,
             GistCommand.self,
+            WorkflowCommand.self,
+            RunCommand.self,
+            LabelCommand.self,
         ]
     )
 
