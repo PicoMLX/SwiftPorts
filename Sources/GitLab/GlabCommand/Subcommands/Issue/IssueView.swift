@@ -47,8 +47,22 @@ struct IssueView: AsyncParsableCommand {
             return
         }
 
+        // Fetch notes upfront when --comments was passed so they're
+        // available for both the pretty-print and the JSON paths.
+        let notes: [Note]? = comments
+            ? try await client.get(
+                "projects/\(target.encodedPath)/issues/\(parsed.iid)/notes",
+                query: [URLQueryItem(name: "sort", value: "asc")])
+            : nil
+        let userNotes = notes?.filter { !$0.system }
+
         if json {
-            print(try CodableOutput.prettyJSON(issue))
+            if let userNotes {
+                print(try CodableOutput.prettyJSON(
+                    IssueWithComments(issue: issue, comments: userNotes)))
+            } else {
+                print(try CodableOutput.prettyJSON(issue))
+            }
             return
         }
 
@@ -72,13 +86,7 @@ struct IssueView: AsyncParsableCommand {
             print("\n--\n\(body)")
         }
 
-        if comments {
-            let notes: [Note] = try await client.get(
-                "projects/\(target.encodedPath)/issues/\(parsed.iid)/notes",
-                query: [URLQueryItem(name: "sort", value: "asc")])
-            // Drop system notes by default — they are noise
-            // ("changed milestone to ...") unless the user asked.
-            let userNotes = notes.filter { !$0.system }
+        if let userNotes {
             guard !userNotes.isEmpty else {
                 print("\n(no comments)")
                 return
@@ -90,5 +98,21 @@ struct IssueView: AsyncParsableCommand {
                 print(note.body)
             }
         }
+    }
+}
+
+/// `--comments --json` output shape: the issue's fields at the top
+/// level, plus a sibling `"comments"` array. Flat shape so existing
+/// pipes (`jq '.iid'`, `.title`, `.webUrl`) keep working.
+private struct IssueWithComments: Encodable {
+    let issue: Issue
+    let comments: [Note]
+
+    private enum ExtraKeys: String, CodingKey { case comments }
+
+    func encode(to encoder: Encoder) throws {
+        try issue.encode(to: encoder)
+        var container = encoder.container(keyedBy: ExtraKeys.self)
+        try container.encode(comments, forKey: .comments)
     }
 }
