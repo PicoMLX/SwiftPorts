@@ -31,6 +31,12 @@ let package = Package(
         // too. Used by the future OAuth flow (PKCE = SHA-256 of a verifier).
         .package(url: "https://github.com/apple/swift-crypto",
                  from: "3.0.0"),
+        // libyaml-backed YAML reader/writer. swift-configuration covers
+        // the read side via a trait, but we also need to *write*
+        // ~/.config/gh/config.yml and hosts.yml — Yams handles both
+        // directions and is the de-facto Swift YAML library.
+        .package(url: "https://github.com/jpsim/Yams",
+                 from: "6.0.0"),
     ],
     targets: [
         .target(
@@ -41,6 +47,7 @@ let package = Package(
                 .product(name: "HTTPTypesFoundation", package: "swift-http-types"),
                 .product(name: "Configuration", package: "swift-configuration"),
                 .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "Yams", package: "Yams"),
             ],
             path: "Sources/SwiftGHCore"
         ),

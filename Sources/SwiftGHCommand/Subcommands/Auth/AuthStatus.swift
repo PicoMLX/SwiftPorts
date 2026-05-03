@@ -18,7 +18,9 @@ struct AuthStatus: AsyncParsableCommand {
 
     func run() async throws {
         let config = try await CommandContext.resolveConfig(host: hostname)
-        let source = TokenSource.detect(configToken: config.token)
+        let hostsToken = (try? HostsFileStore().read())?[config.host]?.oauthToken
+        let source = TokenSource.detect(
+            configToken: config.token, hostsToken: hostsToken)
 
         print("\(config.host)")
 
