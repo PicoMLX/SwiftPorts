@@ -1,4 +1,4 @@
-// swift-tools-version:6.2
+// swift-tools-version:6.1
 import PackageDescription
 
 // SwiftPorts is a monorepo of pure-Swift, cross-platform
