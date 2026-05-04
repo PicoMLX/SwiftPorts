@@ -77,11 +77,15 @@ jobs:
         run: swift test -v --skip-build --no-parallel
 
   build-windows:
-    # Investigation job: Windows support is not yet a committed
-    # compatibility target, so collect compiler/test failures without
-    # blocking existing macOS / iOS / Linux CI.
+    # Library-only build on Windows. The libgit2 SwiftPM dependency
+    # (`ibrahimcetin/libgit2`) doesn't ship Win32 source configuration —
+    # `src/util/win32` is excluded for every platform in its
+    # Package.swift, so SwiftGit / GitCommand / GhCommand / GlabCommand
+    # and their `git`/`gh`/`glab` executables can't compile here. Build
+    # only the targets that don't transitively pull in libgit2; track
+    # full Windows support behind a separate libgit2-on-Windows fork.
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - name: Setup Swift
@@ -97,45 +101,51 @@ jobs:
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib --triplet x64-windows-static-md
-      - name: Build (Windows)
+      - name: Build (Windows — non-libgit2 targets)
         shell: pwsh
         run: |
           $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          swift build --build-tests -v `
+          swift build -v `
+            --target ForgeKit `
+            --target ZipKit `
+            --target ZipCommand `
+            --target UnzipCommand `
+            --target GitHub `
+            --target GitLab `
             -Xcc "-I$base\include" `
             -Xlinker "/LIBPATH:$base\lib"
-        continue-on-error: true
-      - name: Test (Windows)
-        shell: pwsh
-        run: |
-          $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          swift test -v --skip-build --no-parallel `
-            -Xcc "-I$base\include" `
-            -Xlinker "/LIBPATH:$base\lib"
-        continue-on-error: true
 
   # Uses skiptools/swift-android-action which wraps the swift.org Android
-  # SDK setup AND runs the SwiftPM tests on an x86_64 Android emulator.
-  # No `container:` here — the action provisions its own toolchain and
-  # the emulator setup needs nested KVM, which only works on the bare
-  # ubuntu-* runner image.
+  # SDK setup. No `container:` here — the action provisions its own
+  # toolchain.
   #
-  # Single action invocation: the action's emulator + test steps are
-  # gated on `build-package == build-tests == run-tests == 'true'`
-  # (see action.yml), so a split "build first / test second" pair makes
-  # the second call a no-op. Keep build + test in one step.
+  # Library-only build: the executable targets (`zip`, `unzip`, `gh`,
+  # `glab`, `git`) link as standalone Bionic ELFs and trip the action's
+  # CRT setup (`undefined symbol: __libc_init`). The realistic Android
+  # consumer is SwiftBash embedding the *libraries*, so restrict the
+  # build to library targets via `--target` flags and skip the
+  # emulator test phase. Revisit once skiptools/swift-android-action
+  # ships an executable-friendly link recipe.
   build-android:
     runs-on: ubuntu-latest
-    # First cold run = ~25 min (SDK + NDK + emulator boot dominates);
-    # cached subsequent runs are ~5 min. 30 min covers both with a
-    # comfortable margin.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Build & Test (Android emulator)
+      - name: Build (Android — library targets only)
         uses: skiptools/swift-android-action@v2
         with:
           swift-version: "6.3"
-          # The default GitHub Linux runner has ~14 GiB free; the SDK,
-          # NDK, and emulator together push past that without cleanup.
           free-disk-space: true
+          build-tests: false
+          run-tests: false
+          swift-build-flags: >-
+            --target ForgeKit
+            --target ZipKit
+            --target ZipCommand
+            --target UnzipCommand
+            --target GitHub
+            --target GhCommand
+            --target GitLab
+            --target GlabCommand
+            --target SwiftGit
+            --target GitCommand
