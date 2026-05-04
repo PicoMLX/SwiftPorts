@@ -77,11 +77,17 @@ jobs:
         run: swift test -v --skip-build --no-parallel
 
   build-windows:
-    # Full Windows build. We depend on a fork of ibrahimcetin/libgit2
-    # that adds an `#elseif os(Windows)` arm to Package.swift wiring up
-    # `src/util/win32/*`, BCrypt SHA, and WinHTTP HTTPS — so the whole
-    # SwiftGit / GitCommand / GhCommand / GlabCommand / `git` / `gh` /
-    # `glab` chain compiles here too.
+    # Windows build, scoped to non-ZIPFoundation targets. The libgit2
+    # fork (`odrobnik/libgit2#windows-android-platforms`) builds clean
+    # on Windows with WinHTTP / SSPI / BCrypt — so SwiftGit / GitCommand
+    # / GitLab / GlabCommand / `git` / `glab` all compile.
+    #
+    # ZIPFoundation, however, leans heavily on POSIX symbols (`mode_t`,
+    # `S_IFLNK`, `st_atim`, `fseeko`, `timegm`, `timeval`) that MSVC
+    # doesn't ship. Until we add a Windows POSIX-compat shim to our
+    # ZIPFoundation fork, exclude its consumers (ZipKit / ZipCommand /
+    # UnzipCommand / zip / unzip / GitHub / GhCommand / gh) from the
+    # Windows build matrix.
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -99,11 +105,18 @@ jobs:
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib --triplet x64-windows-static-md
-      - name: Build (Windows)
+      - name: Build (Windows — non-ZIPFoundation targets)
         shell: pwsh
         run: |
           $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          swift build --build-tests -v `
+          swift build -v `
+            --target ForgeKit `
+            --target GitLab `
+            --target GlabCommand `
+            --target glab `
+            --target SwiftGit `
+            --target GitCommand `
+            --target git `
             -Xcc "-I$base\include" `
             -Xlinker "/LIBPATH:$base\lib"
 
