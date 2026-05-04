@@ -11,18 +11,11 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Cancel earlier runs of this workflow on the same branch as soon as
-# a new commit comes in. SwiftPM checkouts of libgit2 are slow on
-# fresh runners, so stacking runs wastes capacity.
-concurrency:
-  group: swift-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
 
   build-macos:
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Verify Swift version
@@ -35,11 +28,13 @@ jobs:
   build-ios:
     # Compile-only check on `generic/platform=iOS` (no simulator boots).
     # Catches API/portability breaks against the iOS SDK without paying
-    # for a simulator phase. Our Process-based test fixtures are gated
-    # `#if os(macOS) || os(Linux) || os(Windows)` so the test bundle
-    # itself stays a non-iOS concern.
+    # for a simulator phase. An iOS Simulator `xcodebuild test` step
+    # was attempted but surfaces a separate class of issues (one test
+    # hangs the simulator long enough to trigger xcodebuild's restart-
+    # and-fail logic, even though a re-run passes); tracking that as
+    # follow-up work rather than blocking this PR.
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Select Xcode 26.0
@@ -55,16 +50,17 @@ jobs:
 
   build-linux:
     # Linux: full build + test, parity with Apple platforms.
-    # libgit2 1.9.x needs OpenSSL + zlib + ca-certificates for HTTPS
-    # clones; pkg-config wires libgit2's CMake config up correctly.
+    # Only system requirement is `zlib1g-dev` for CZlib's modulemap
+    # (the runtime libz is preinstalled). xattr functions resolve
+    # through the local CXattr systemLibrary target — no extra apt
+    # install needed; `<sys/xattr.h>` ships in the standard Linux
+    # libc-dev set that swiftlang/swift's container already has.
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      - name: Install C dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config zlib1g-dev ca-certificates
+      - name: Install zlib headers
+        run: sudo apt-get install -y zlib1g-dev
       - name: Verify Swift version
         run: swift --version
       - name: Build (Linux)
@@ -73,9 +69,9 @@ jobs:
         run: swift test -v --skip-build --no-parallel
 
   build-windows:
-    # Investigation job: libgit2 1.9.x via ibrahimcetin/libgit2 doesn't
-    # advertise official Windows support, so collect compiler/test
-    # failures without blocking the macOS / iOS / Linux jobs.
+    # Investigation job: Windows support is not yet a committed
+    # compatibility target, so collect compiler/test failures without
+    # blocking existing macOS / iOS / Linux CI.
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -86,11 +82,28 @@ jobs:
           swift-version: "6.3.1"
       - name: Verify Swift version
         run: swift --version
+      - name: Install zlib (vcpkg)
+        # vcpkg is preinstalled on windows-latest at C:\vcpkg.
+        # x64-windows-static-md gives us a `zlib.lib` linked against
+        # the dynamic UCRT, which matches Swift's default link mode.
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib --triplet x64-windows-static-md
       - name: Build (Windows)
-        run: swift build --build-tests -v
+        shell: pwsh
+        run: |
+          $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
+          swift build --build-tests -v `
+            -Xcc "-I$base\include" `
+            -Xlinker "/LIBPATH:$base\lib"
         continue-on-error: true
       - name: Test (Windows)
-        run: swift test -v --skip-build --no-parallel
+        shell: pwsh
+        run: |
+          $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
+          swift test -v --skip-build --no-parallel `
+            -Xcc "-I$base\include" `
+            -Xlinker "/LIBPATH:$base\lib"
         continue-on-error: true
 
   # Uses skiptools/swift-android-action which wraps the swift.org Android
@@ -98,8 +111,16 @@ jobs:
   # No `container:` here — the action provisions its own toolchain and
   # the emulator setup needs nested KVM, which only works on the bare
   # ubuntu-* runner image.
+  #
+  # Single action invocation: the action's emulator + test steps are
+  # gated on `build-package == build-tests == run-tests == 'true'`
+  # (see action.yml), so a split "build first / test second" pair makes
+  # the second call a no-op. Keep build + test in one step.
   build-android:
     runs-on: ubuntu-latest
+    # First cold run = ~25 min (SDK + NDK + emulator boot dominates);
+    # cached subsequent runs are ~5 min. 30 min covers both with a
+    # comfortable margin.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
