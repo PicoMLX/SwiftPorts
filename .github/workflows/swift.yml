@@ -134,34 +134,19 @@ jobs:
   # SDK setup. No `container:` here — the action provisions its own
   # toolchain.
   #
-  # Library-only build: the executable targets (`zip`, `unzip`, `gh`,
-  # `glab`, `git`) link as standalone Bionic ELFs and trip the action's
-  # CRT setup (`undefined symbol: __libc_init`). The XCTest test runner
-  # is also an executable, so the test build is off too. The realistic
-  # Android consumer is SwiftBash embedding the *libraries* — restrict
-  # the build to library targets via `--target` flags and skip the
-  # emulator test phase. Revisit once skiptools/swift-android-action
-  # ships an executable-friendly link recipe.
+  # Full build + test: the libgit2 fork
+  # (`odrobnik/libgit2#windows-android-platforms`) and the ZIPFoundation
+  # fork (`odrobnik/ZIPFoundation#fix/android-windows-imports`) now ship
+  # the Bionic-side fixes that previously broke the executable link
+  # path, so let the action run its default `swift build --build-tests`
+  # + emulator-test pass against the whole package.
   build-android:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Build (Android — library targets only)
+      - name: Build & Test (Android emulator)
         uses: skiptools/swift-android-action@v2
         with:
           swift-version: "6.3"
           free-disk-space: true
-          build-tests: false
-          run-tests: false
-          swift-build-flags: >-
-            --target ForgeKit
-            --target ZipKit
-            --target ZipCommand
-            --target UnzipCommand
-            --target GitHub
-            --target GhCommand
-            --target GitLab
-            --target GlabCommand
-            --target SwiftGit
-            --target GitCommand
