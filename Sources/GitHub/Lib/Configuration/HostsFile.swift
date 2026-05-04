@@ -70,7 +70,11 @@ public struct HostsFileStore: Sendable {
         if let xdg, !xdg.isEmpty {
             configDir = URL(fileURLWithPath: xdg, isDirectory: true)
         } else {
-            configDir = FileManager.default.homeDirectoryForCurrentUser
+            // `homeDirectoryForCurrentUser` is iOS-unavailable. Fall
+            // back to $HOME / NSHomeDirectory().
+            let home = ProcessInfo.processInfo.environment["HOME"]
+                ?? NSHomeDirectory()
+            configDir = URL(fileURLWithPath: home, isDirectory: true)
                 .appendingPathComponent(".config", isDirectory: true)
         }
         return configDir

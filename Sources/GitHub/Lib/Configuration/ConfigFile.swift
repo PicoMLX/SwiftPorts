@@ -37,7 +37,13 @@ public struct ConfigFileStore: Sendable {
         if let xdg, !xdg.isEmpty {
             dir = URL(fileURLWithPath: xdg, isDirectory: true)
         } else {
-            dir = FileManager.default.homeDirectoryForCurrentUser
+            // `homeDirectoryForCurrentUser` is iOS-unavailable. Fall
+            // back to $HOME, then NSHomeDirectory(), then a sandboxed
+            // temp dir — embedders shouldn't be reading gh config from
+            // disk on iOS, but the type still needs to compile.
+            let home = ProcessInfo.processInfo.environment["HOME"]
+                ?? NSHomeDirectory()
+            dir = URL(fileURLWithPath: home, isDirectory: true)
                 .appendingPathComponent(".config", isDirectory: true)
         }
         return dir
