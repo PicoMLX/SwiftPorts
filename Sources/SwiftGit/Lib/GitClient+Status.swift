@@ -90,10 +90,10 @@ extension GitClient {
             try check(git_status_options_init(&opts, UInt32(GIT_STATUS_OPTIONS_VERSION)))
             opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR
             opts.flags =
-                GIT_STATUS_OPT_INCLUDE_UNTRACKED.rawValue
-                | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS.rawValue
-                | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX.rawValue
-                | GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR.rawValue
+                UInt32(GIT_STATUS_OPT_INCLUDE_UNTRACKED.rawValue)
+                | UInt32(GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS.rawValue)
+                | UInt32(GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX.rawValue)
+                | UInt32(GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR.rawValue)
 
             var list: OpaquePointer?
             try check(git_status_list_new(&list, repo, &opts))

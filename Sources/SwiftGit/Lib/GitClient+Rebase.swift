@@ -164,7 +164,7 @@ extension GitClient {
             var coOpts = git_checkout_options()
             try check(git_checkout_options_init(
                 &coOpts, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)))
-            coOpts.checkout_strategy = GIT_CHECKOUT_FORCE.rawValue
+            coOpts.checkout_strategy = UInt32(GIT_CHECKOUT_FORCE.rawValue)
             try check(git_checkout_head(repo, &coOpts))
 
             let total = Int(git_rebase_operation_entrycount(rebase))
