@@ -157,6 +157,8 @@ jobs:
       - name: Build each library target (Android)
         run: |
           for target in ForgeKit ZipKit ZipCommand UnzipCommand \
+                        TarKit TarCommand \
+                        GzipKit GzipCommand \
                         GitHub GhCommand GitLab GlabCommand \
                         SwiftGit GitCommand; do
             echo "::group::swift build --target $target"

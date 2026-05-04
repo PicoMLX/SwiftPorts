@@ -37,6 +37,12 @@ public enum Archive {
         return try collectEntries(reader: reader, readData: true).map(\.entry)
     }
 
+    @discardableResult
+    public static func test(data: Data) throws -> [Entry] {
+        let reader = try newReader(data: data)
+        return try collectEntries(reader: reader, readData: true).map(\.entry)
+    }
+
     // MARK: Read a single entry
 
     /// Returns the decompressed bytes of `entryPath`. Used by `unzip -p`.

@@ -36,6 +36,20 @@ let package = Package(
         .executable(name: "zip", targets: ["zip"]),
         .executable(name: "unzip", targets: ["unzip"]),
 
+        // TarKit umbrella — POSIX tar with libarchive backend.
+        .library(name: "TarKit", targets: ["TarKit"]),
+        .library(name: "TarCommand", targets: ["TarCommand"]),
+        .executable(name: "tar", targets: ["tar"]),
+
+        // GzipKit umbrella — single-file gzip via libarchive's
+        // raw + gzip filter. One library + three personalities
+        // (gzip / gunzip / zcat).
+        .library(name: "GzipKit", targets: ["GzipKit"]),
+        .library(name: "GzipCommand", targets: ["GzipCommand"]),
+        .executable(name: "gzip", targets: ["gzip"]),
+        .executable(name: "gunzip", targets: ["gunzip"]),
+        .executable(name: "zcat", targets: ["zcat"]),
+
         // GitHub umbrella — gh(1) port.
         .library(name: "GitHub", targets: ["GitHub"]),
         .library(name: "GhCommand", targets: ["GhCommand"]),
@@ -143,6 +157,90 @@ let package = Package(
             dependencies: ["UnzipCommand", "ZipKit"]
         ),
 
+        // MARK: TarKit umbrella
+        .target(
+            name: "TarKit",
+            dependencies: [
+                .product(name: "Archive", package: "swift-archive"),
+            ],
+            path: "Sources/TarKit/Lib"
+        ),
+        .target(
+            name: "TarCommand",
+            dependencies: [
+                "TarKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/TarKit/TarCommand"
+        ),
+        .executableTarget(
+            name: "tar",
+            dependencies: ["TarCommand"],
+            path: "Sources/TarKit/tar"
+        ),
+        .testTarget(
+            name: "TarKitTests",
+            dependencies: ["TarKit"]
+        ),
+        .testTarget(
+            name: "TarTests",
+            dependencies: ["TarCommand", "TarKit"]
+        ),
+
+        // MARK: GzipKit umbrella
+        // Uses zlib directly (via the local CZlib systemLibrary) rather
+        // than libarchive — libarchive's read side excludes `raw` format
+        // by default, so a pure single-file gzip stream written with
+        // libarchive's raw+gzip filter can't be parsed back by the same
+        // wrapper. zlib's own inflate/deflate handle gzip framing
+        // natively (`MAX_WBITS + 16` for write, `+ 32` for read auto-
+        // detection) and zlib is already on every platform we target.
+        .systemLibrary(
+            name: "CZlib",
+            path: "Sources/CZlib",
+            pkgConfig: "zlib",
+            providers: [
+                .brew(["zlib"]),
+                .apt(["zlib1g-dev"]),
+            ]
+        ),
+        .target(
+            name: "GzipKit",
+            dependencies: ["CZlib"],
+            path: "Sources/GzipKit/Lib"
+        ),
+        .target(
+            name: "GzipCommand",
+            dependencies: [
+                "GzipKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/GzipKit/GzipCommand"
+        ),
+        .executableTarget(
+            name: "gzip",
+            dependencies: ["GzipCommand"],
+            path: "Sources/GzipKit/gzip"
+        ),
+        .executableTarget(
+            name: "gunzip",
+            dependencies: ["GzipCommand"],
+            path: "Sources/GzipKit/gunzip"
+        ),
+        .executableTarget(
+            name: "zcat",
+            dependencies: ["GzipCommand"],
+            path: "Sources/GzipKit/zcat"
+        ),
+        .testTarget(
+            name: "GzipKitTests",
+            dependencies: ["GzipKit"]
+        ),
+        .testTarget(
+            name: "GzipTests",
+            dependencies: ["GzipCommand", "GzipKit"]
+        ),
+
         // MARK: GitHub umbrella
         .target(
             name: "GitHub",
@@ -164,6 +262,8 @@ let package = Package(
                 "GitHub",
                 "ForgeKit",
                 "SwiftGit",
+                "TarKit",
+                "ZipKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/GitHub/GhCommand"
