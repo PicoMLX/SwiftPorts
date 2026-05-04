@@ -23,10 +23,14 @@ jobs:
     # macos-15 satisfies our `.macOS(.v15)` package floor and ships
     # Xcode 16+, which builds libgit2 1.9.x cleanly via the
     # ibrahimcetin/libgit2 SwiftPM package's CommonCrypto path.
+    # Xcode 26 is required: we depend on swift-configuration ≥ 1.0,
+    # which uses tools-version 6.2 (Swift 6.2 toolchain).
     runs-on: macos-15
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app
       - name: Verify Swift version
         run: swift --version
       - name: Build (macOS)
@@ -39,6 +43,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app
       # iOS 18 simulator runtime isn't always preinstalled — ensure
       # it's available so xcodebuild can find a matching destination.
       - name: Install iOS Simulator runtime
@@ -59,7 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     container:
-      image: swift:6.0-jammy
+      # Pinned to 6.2 — swift-configuration uses tools-version 6.2.
+      image: swift:6.2-jammy
     steps:
       - uses: actions/checkout@v4
       # libgit2 needs a few system libs on Linux: zlib (transitively
@@ -90,7 +97,7 @@ jobs:
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
-          swift-version: "6.0.3"
+          swift-version: "6.2"
       - name: Verify Swift version
         run: swift --version
       - name: Build (Windows)
@@ -107,7 +114,7 @@ jobs:
       - name: Build & test (Android emulator)
         uses: skiptools/swift-android-action@v2
         with:
-          swift-version: "6.0"
+          swift-version: "6.2"
           # SDK + NDK + emulator pushes past the default runner's
           # ~14 GiB free. Free up disk first.
           free-disk-space: true

@@ -1,4 +1,4 @@
-// swift-tools-version:6.1
+// swift-tools-version:6.2
 import PackageDescription
 
 // SwiftPorts is a monorepo of pure-Swift, cross-platform
@@ -201,10 +201,9 @@ let package = Package(
         ),
         .testTarget(
             name: "GitLabTests",
-            dependencies: ["GitLab", "GlabCommand", "ForgeKit"],
-            resources: [
-                .copy("Fixtures"),
-            ]
+            dependencies: ["GitLab", "GlabCommand", "ForgeKit"]
+            // Re-add `resources: [.copy("Fixtures")]` once Tests/GitLabTests/Fixtures
+            // has any tracked files; the empty dir doesn't survive git checkout.
         ),
 
         // MARK: SwiftGit umbrella (libgit2-backed GitClient + `git` CLI)
