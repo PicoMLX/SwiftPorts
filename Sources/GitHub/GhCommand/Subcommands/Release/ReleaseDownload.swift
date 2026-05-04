@@ -50,10 +50,14 @@ struct ReleaseDownload: AsyncParsableCommand {
         try FileManager.default.createDirectory(
             at: destDir, withIntermediateDirectories: true)
 
+        // Linux's swift-corelibs-foundation doesn't expose
+        // `URLSession.shared`; instantiate explicitly so the same code
+        // builds on every platform.
+        let session = URLSession(configuration: .default)
         for asset in matching {
             let dest = destDir.appendingPathComponent(asset.name)
             print("→ \(asset.name) (\(ByteCountFormatter.string(fromByteCount: asset.size, countStyle: .file)))")
-            let (data, _) = try await URLSession.shared.data(from: asset.browserDownloadUrl)
+            let (data, _) = try await session.data(from: asset.browserDownloadUrl)
             try data.write(to: dest)
         }
     }
