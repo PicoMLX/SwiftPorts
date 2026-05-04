@@ -109,42 +109,36 @@ jobs:
           # fork's per-platform `linkerSettings` doesn't reliably
           # propagate `.linkedLibrary("zlib")` to the final executable
           # link, so inject `zlib.lib` here as well.
-          swift build -v `
+          swift build --build-tests -v `
+            -Xcc "-I$base\include" `
+            -Xlinker "/LIBPATH:$base\lib" `
+            -Xlinker "zlib.lib"
+      - name: Test (Windows)
+        shell: pwsh
+        run: |
+          $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
+          swift test -v --skip-build --no-parallel `
             -Xcc "-I$base\include" `
             -Xlinker "/LIBPATH:$base\lib" `
             -Xlinker "zlib.lib"
 
   # Uses skiptools/swift-android-action which wraps the swift.org Android
-  # SDK setup. No `container:` here — the action provisions its own
-  # toolchain.
-  #
-  # Library-only build: the executable targets (`zip`, `unzip`, `gh`,
-  # `glab`, `git`) link as standalone Bionic ELFs and trip the action's
-  # CRT setup (`undefined symbol: __libc_init`). The realistic Android
-  # consumer is SwiftBash embedding the *libraries*, so restrict the
-  # build to library targets via `--target` flags and skip the
-  # emulator test phase. Revisit once skiptools/swift-android-action
-  # ships an executable-friendly link recipe.
+  # SDK setup AND runs the SwiftPM tests on an x86_64 Android emulator.
+  # No `container:` here — the action provisions its own toolchain and
+  # the emulator setup needs nested KVM, which only works on the bare
+  # ubuntu-* runner image.
   build-android:
     runs-on: ubuntu-latest
+    # First cold run = ~25 min (SDK + NDK + emulator boot dominates);
+    # cached subsequent runs are ~5 min. 30 min covers both with a
+    # comfortable margin.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Build (Android — library targets only)
+      - name: Build & Test (Android emulator)
         uses: skiptools/swift-android-action@v2
         with:
           swift-version: "6.3"
+          # SDK + NDK + emulator pushes past the default runner's
+          # ~14 GiB free. Free up disk first.
           free-disk-space: true
-          build-tests: false
-          run-tests: false
-          swift-build-flags: >-
-            --target ForgeKit
-            --target ZipKit
-            --target ZipCommand
-            --target UnzipCommand
-            --target GitHub
-            --target GhCommand
-            --target GitLab
-            --target GlabCommand
-            --target SwiftGit
-            --target GitCommand
