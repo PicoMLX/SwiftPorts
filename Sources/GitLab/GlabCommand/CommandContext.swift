@@ -36,20 +36,34 @@ enum CommandContext {
         return { url, _, allowed in
             guard allowed.contains(.userPassword) else { return nil }
             guard let host = url.host else { return nil }
-
-            let semaphore = DispatchSemaphore(value: 0)
-            nonisolated(unsafe) var token: String? = nil
-            Task.detached {
-                if let config = try? await resolver.resolve(host: host),
-                   let t = config.token, !t.isEmpty {
-                    token = t
-                }
-                semaphore.signal()
-            }
-            semaphore.wait()
-            guard let token else { return nil }
+            guard let token = blockingResolveToken(host: host) else { return nil }
             return .token(token, username: "oauth2")
         }
+    }
+
+    /// Bridges the libgit2 sync callback to our async resolver. The
+    /// libgit2 transport calls our credential closure on a worker
+    /// thread it owns, so blocking via `DispatchSemaphore` is safe.
+    /// `MutableBox` is `@unchecked Sendable` because writes happen
+    /// strictly before `semaphore.signal()` and reads strictly after
+    /// `semaphore.wait()` — no concurrent access.
+    private static func blockingResolveToken(host: String) -> String? {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = MutableBox<String?>(value: nil)
+        Task.detached { [box] in
+            if let config = try? await resolver.resolve(host: host),
+               let t = config.token, !t.isEmpty {
+                box.value = t
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return box.value
+    }
+
+    private final class MutableBox<T>: @unchecked Sendable {
+        var value: T
+        init(value: T) { self.value = value }
     }
 
     /// Repo resolution wired with the credential-check closure that

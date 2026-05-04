@@ -12,9 +12,9 @@ public enum DefaultSecretStore {
         #if canImport(Security)
         return KeychainSecretStore()
         #else
-        Loggers.auth.warning(
-            "No persistent secret store available on this platform; " +
-            "tokens will not survive across runs.")
+        FileHandle.standardError.write(Data(
+            ("warning: no persistent secret store available on this " +
+             "platform; tokens will not survive across runs.\n").utf8))
         return InMemorySecretStore()
         #endif
     }

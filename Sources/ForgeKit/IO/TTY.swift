@@ -10,14 +10,18 @@ import Musl
 /// Lightweight TTY + colour-capability detection. Mirrors what gh does
 /// in `pkg/iostreams/iostreams.go` — without the colour scheme zoo.
 public enum TTY {
-    /// True when stdout is attached to a terminal.
+    /// True when stdout is attached to a terminal. We hit `isatty` with
+    /// the raw `STDOUT_FILENO` integer (1) instead of `fileno(stdout)`
+    /// — the `stdout` FILE* is a non-Sendable global on Linux and
+    /// trips Swift 6.2 strict concurrency.
     public static var isStdoutTTY: Bool {
-        isatty(fileno(stdout)) != 0
+        isatty(1) != 0
     }
 
-    /// True when stderr is attached to a terminal.
+    /// True when stderr is attached to a terminal. Same rationale as
+    /// `isStdoutTTY` — uses the raw `STDERR_FILENO` integer (2).
     public static var isStderrTTY: Bool {
-        isatty(fileno(stderr)) != 0
+        isatty(2) != 0
     }
 
     /// True when colour escape codes should be emitted on stdout.
