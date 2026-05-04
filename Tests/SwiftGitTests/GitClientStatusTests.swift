@@ -4,7 +4,7 @@
 // whole suite to non-Windows. Apple/Linux still cover the integration
 // surface; Windows-side logic is covered by the unit-shape tests in
 // `GitCommandTests` and `GitLabTests`.
-#if !os(Windows)
+#if os(macOS) || os(Linux)
 import Foundation
 import Testing
 import ForgeKit
