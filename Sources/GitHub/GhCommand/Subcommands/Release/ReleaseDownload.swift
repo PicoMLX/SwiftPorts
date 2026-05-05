@@ -4,7 +4,9 @@ import Foundation
 import FoundationNetworking  // URLSession lives in a separate module on Linux
 #endif
 import GitHub
+import Lz4Kit
 import TarKit
+import XzKit
 import ZipKit
 
 struct ReleaseDownload: AsyncParsableCommand {
@@ -137,7 +139,9 @@ enum ArchiveFormatDetector {
             || lower.hasSuffix(".tgz")
             || lower.hasSuffix(".tar.bz2")
             || lower.hasSuffix(".tar.xz")
-            || lower.hasSuffix(".tar.zst") {
+            || lower.hasSuffix(".tar.zst")
+            || lower.hasSuffix(".tar.lz4")
+            || lower.hasSuffix(".tlz4") {
             return .tar
         }
         return nil
@@ -147,7 +151,7 @@ enum ArchiveFormatDetector {
     /// `foo-1.2.3.tar.gz` → `foo-1.2.3`, `foo.zip` → `foo`.
     static func strippedBaseName(_ name: String) -> String {
         let suffixes = [".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
-                        ".tgz", ".tar", ".zip"]
+                        ".tar.lz4", ".tlz4", ".tgz", ".tar", ".zip"]
         let lower = name.lowercased()
         for suffix in suffixes where lower.hasSuffix(suffix) {
             return String(name.dropLast(suffix.count))
@@ -162,9 +166,64 @@ enum ArchiveFormatDetector {
                 from: archive,
                 options: ZipKit.ExtractOptions(destination: dest))
         case .tar:
+            // Some compressed-tar variants need pre-decompression
+            // before TarKit (libarchive) can read them:
+            //
+            //  - `.tar.xz` on Apple-mobile: libarchive's lzma filter
+            //    isn't compiled into CArchive there (per the
+            //    swift-archive per-platform-traits fork), so we
+            //    chain XzKit (Compression.framework backend) +
+            //    TarKit.
+            //
+            //  - `.tar.lz4` on every platform: our build doesn't
+            //    enable libarchive's lz4 filter at all (no
+            //    HAVE_LIBLZ4 in the upstream Package.swift), so
+            //    chain Lz4Kit + TarKit unconditionally.
+            //
+            // Both chains stage through a temp `.tar` file rather
+            // than buffering the whole decompressed archive in
+            // memory — release tarballs can run hundreds of MB
+            // and the memory peak would otherwise hold the
+            // compressed + decompressed bytes simultaneously.
+            let lower = archive.lastPathComponent.lowercased()
+            // Lz4Kit is gated off Android (no NDK liblz4, no
+            // Compression.framework). Other platforms always have
+            // it because libarchive itself doesn't compile in lz4
+            // either, so the chain is the only path.
+            #if canImport(Compression) || os(Linux) || os(Windows)
+            if lower.hasSuffix(".tar.lz4") || lower.hasSuffix(".tlz4") {
+                let stagingTar = makeStagingTarURL()
+                _ = try Lz4Kit.Lz4.decompressFile(
+                    at: archive, to: stagingTar,
+                    keepInput: true, overwrite: true)
+                defer { try? FileManager.default.removeItem(at: stagingTar) }
+                try TarKit.Archive.extract(
+                    from: stagingTar,
+                    options: TarKit.ExtractOptions(destination: dest))
+                return
+            }
+            #endif
+            #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+            if lower.hasSuffix(".tar.xz") || lower.hasSuffix(".txz") {
+                let stagingTar = makeStagingTarURL()
+                _ = try XzKit.Xz.decompressFile(
+                    at: archive, to: stagingTar,
+                    keepInput: true, overwrite: true)
+                defer { try? FileManager.default.removeItem(at: stagingTar) }
+                try TarKit.Archive.extract(
+                    from: stagingTar,
+                    options: TarKit.ExtractOptions(destination: dest))
+                return
+            }
+            #endif
             try TarKit.Archive.extract(
                 from: archive,
                 options: TarKit.ExtractOptions(destination: dest))
         }
+    }
+
+    private static func makeStagingTarURL() -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("gh-release-\(UUID().uuidString).tar")
     }
 }

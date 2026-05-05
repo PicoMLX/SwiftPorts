@@ -1,29 +1,32 @@
-// XzKit is available wherever Apple's Compression.framework or
-// system liblzma is — every Apple platform plus Linux / Windows.
-// Android stays gated out (no NDK lzma, no Compression framework).
+// Lz4Kit is available wherever Apple's Compression framework or
+// system liblz4 is — every Apple platform plus Linux / Windows.
+// Android stays gated out (no NDK liblz4, no Compression).
 #if canImport(Compression) || os(Linux) || os(Windows)
 
 import ArgumentParser
 import Foundation
-import XzKit
+import Lz4Kit
 
-public enum XzMode: Sendable {
+public enum Lz4Mode: Sendable {
     case compress
     case decompress
 }
 
-/// `xz [options] [file...]` — compress files (default) or decompress
-/// with `-d`. Reads from stdin / writes to stdout when no files are
-/// given.
-public struct Xz: AsyncParsableCommand {
+/// `lz4 [options] [file...]` — compress files (default) or
+/// decompress with `-d`. Reads from stdin / writes to stdout when
+/// no files are given.
+public struct Lz4: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "xz",
-        abstract: "Compress files with xz / lzma2.",
+        commandName: "lz4",
+        abstract: "Compress files with LZ4 (frame format).",
         discussion: """
         With no files (or `-`), reads stdin and writes to stdout.
-        With files, each <file> becomes <file>.xz and the original is
-        removed unless -k is given. Use `-d` (or run as `unxz`) to
-        decompress.
+        With files, each <file> becomes <file>.lz4 and the original
+        is removed unless -k is given. Use `-d` (or run as `unlz4`)
+        to decompress.
+
+        Output is the standard `.lz4` v1.6.x frame format —
+        compatible with the upstream `lz4(1)` reference tool.
         """
     )
 
@@ -50,10 +53,9 @@ public struct Xz: AsyncParsableCommand {
           help: "Print per-file actions on stderr.")
     public var verbose: Bool = false
 
-    // -0..-9 plus -e (extreme): silently accepted. liblzma uses preset 6
-    // by default; we don't expose runtime tuning yet.
-    @Flag(name: .customShort("0"), help: ArgumentHelp(visibility: .hidden))
-    public var level0 = false
+    // -1..-9: silently accepted for compatibility. We only expose
+    // the default LZ4 fast level today; tuning lands when somebody
+    // wires LZ4HC into the engine.
     @Flag(name: .customShort("1"), help: ArgumentHelp(visibility: .hidden))
     public var level1 = false
     @Flag(name: .customShort("2"), help: ArgumentHelp(visibility: .hidden))
@@ -72,8 +74,6 @@ public struct Xz: AsyncParsableCommand {
     public var level8 = false
     @Flag(name: .customShort("9"), help: ArgumentHelp(visibility: .hidden))
     public var level9 = false
-    @Flag(name: .customShort("e"), help: ArgumentHelp(visibility: .hidden))
-    public var extreme = false
 
     @Argument(parsing: .remaining,
               help: "Files to (de)compress. '-' or no files = stdin.")
@@ -82,7 +82,7 @@ public struct Xz: AsyncParsableCommand {
     public init() {}
 
     public func run() async throws {
-        try XzEngine.run(
+        try Lz4Engine.run(
             mode: decompress ? .decompress : .compress,
             stdout: stdout,
             keep: keep,
@@ -93,11 +93,11 @@ public struct Xz: AsyncParsableCommand {
     }
 }
 
-/// `unxz [options] [file...]` — equivalent to `xz -d`.
-public struct Unxz: AsyncParsableCommand {
+/// `unlz4 [options] [file...]` — equivalent to `lz4 -d`.
+public struct Unlz4: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "unxz",
-        abstract: "Decompress xz / lzma files."
+        commandName: "unlz4",
+        abstract: "Decompress LZ4-compressed files."
     )
 
     @Flag(name: [.customShort("c"), .long],
@@ -126,7 +126,7 @@ public struct Unxz: AsyncParsableCommand {
     public init() {}
 
     public func run() async throws {
-        try XzEngine.run(
+        try Lz4Engine.run(
             mode: .decompress,
             stdout: stdout,
             keep: keep,
@@ -137,15 +137,15 @@ public struct Unxz: AsyncParsableCommand {
     }
 }
 
-/// `xzcat [file...]` — decompress to stdout. = `xz -dc`.
-public struct Xzcat: AsyncParsableCommand {
+/// `lz4cat [file...]` — decompress to stdout. = `lz4 -dc`.
+public struct Lz4cat: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "xzcat",
-        abstract: "Concatenate decompressed xz files to stdout."
+        commandName: "lz4cat",
+        abstract: "Concatenate decompressed LZ4 files to stdout."
     )
 
     @Flag(name: [.customShort("f"), .long],
-          help: "Force read even if input doesn't look xz'd.")
+          help: "Force read even if input doesn't look LZ4-framed.")
     public var force: Bool = false
 
     @Argument(parsing: .remaining,
@@ -155,7 +155,7 @@ public struct Xzcat: AsyncParsableCommand {
     public init() {}
 
     public func run() async throws {
-        try XzEngine.run(
+        try Lz4Engine.run(
             mode: .decompress,
             stdout: true,
             keep: true,
@@ -168,9 +168,9 @@ public struct Xzcat: AsyncParsableCommand {
 
 // MARK: - Engine
 
-enum XzEngine {
+enum Lz4Engine {
     static func run(
-        mode: XzMode,
+        mode: Lz4Mode,
         stdout: Bool,
         keep: Bool,
         force: Bool,
@@ -198,10 +198,10 @@ enum XzEngine {
                 let result: URL
                 switch mode {
                 case .compress:
-                    result = try XzKit.Xz.compressFile(
+                    result = try Lz4Kit.Lz4.compressFile(
                         at: url, keepInput: keep, overwrite: force)
                 case .decompress:
-                    result = try XzKit.Xz.decompressFile(
+                    result = try Lz4Kit.Lz4.decompressFile(
                         at: url, keepInput: keep, overwrite: force)
                 }
                 if verbose {
@@ -212,22 +212,22 @@ enum XzEngine {
         }
     }
 
-    private static func processStdin(mode: XzMode) throws {
+    private static func processStdin(mode: Lz4Mode) throws {
         let input = FileHandle.standardInput.readDataToEndOfFile()
         let output: Data
         switch mode {
-        case .compress:   output = try XzKit.Xz.compress(input)
-        case .decompress: output = try XzKit.Xz.decompress(input)
+        case .compress:   output = try Lz4Kit.Lz4.compress(input)
+        case .decompress: output = try Lz4Kit.Lz4.decompress(input)
         }
         FileHandle.standardOutput.write(output)
     }
 
-    private static func emitFileToStdout(url: URL, mode: XzMode) throws {
+    private static func emitFileToStdout(url: URL, mode: Lz4Mode) throws {
         let bytes = try Data(contentsOf: url)
         let output: Data
         switch mode {
-        case .compress:   output = try XzKit.Xz.compress(bytes)
-        case .decompress: output = try XzKit.Xz.decompress(bytes)
+        case .compress:   output = try Lz4Kit.Lz4.compress(bytes)
+        case .decompress: output = try Lz4Kit.Lz4.decompress(bytes)
         }
         FileHandle.standardOutput.write(output)
     }
