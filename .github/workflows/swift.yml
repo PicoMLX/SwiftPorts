@@ -127,17 +127,29 @@ jobs:
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib bzip2 liblzma zstd --triplet x64-windows-static-md
           $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          # Always print the inventory first so a future naming mismatch
-          # is immediately visible in CI logs (last run lost this output
-          # because it ran after a non-terminating Write-Error).
-          Write-Host "vcpkg .lib inventory under $base\lib:"
-          Get-ChildItem "$base\lib" -Filter "*.lib" -ErrorAction SilentlyContinue |
-            Select-Object Name | Format-Table -AutoSize | Out-Host
-          $zlibLib = Join-Path "$base\lib" "zlib.lib"
-          if (-not (Test-Path $zlibLib)) {
-            throw "vcpkg did not produce zlib.lib at $zlibLib"
+          # Always print the full inventory first (incl. debug/) so a
+          # future naming mismatch is immediately visible in CI logs.
+          # Use Write-Host + FullName instead of Format-Table — the
+          # latter truncates names mid-display (last run printed
+          # `zs.lib` when the actual file was something longer).
+          Write-Host "vcpkg .lib inventory under $base (recursive):"
+          Get-ChildItem "$base" -Recurse -Filter "*.lib" -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "  $($_.FullName)" }
+          # Find anything containing 'zlib' or 'libz' so we can adapt
+          # if vcpkg ever renames the artifact.
+          $candidates = @("zlib.lib", "libzlib.lib", "libz.lib", "z.lib")
+          $zlibLib = $null
+          foreach ($name in $candidates) {
+            $p = Join-Path "$base\lib" $name
+            if (Test-Path $p) { $zlibLib = $p; break }
           }
-          Copy-Item -Force $zlibLib "$base\lib\z.lib"
+          if (-not $zlibLib) {
+            throw "no zlib library found under $base\lib (looked for: $($candidates -join ', '))"
+          }
+          Write-Host "Using zlib library: $zlibLib"
+          if ($zlibLib -ne (Join-Path "$base\lib" "z.lib")) {
+            Copy-Item -Force $zlibLib "$base\lib\z.lib"
+          }
           "VCPKG_BASE=$base" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build (Windows)
         shell: pwsh
