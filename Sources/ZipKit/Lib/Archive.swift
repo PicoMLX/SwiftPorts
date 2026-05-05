@@ -1,4 +1,5 @@
 import Foundation
+import Sandbox
 // Selective imports — the libarchive wrapper module is named `Archive`
 // and exposes its own `enum Archive` (just for version metadata) which
 // would collide with our public `enum Archive` below.
@@ -17,6 +18,7 @@ public enum Archive {
     // MARK: List
 
     public static func list(at url: URL) async throws -> [Entry] {
+        try await Sandbox.authorize(url)
         let reader = try newReader(at: url)
         return try collectEntries(reader: reader, readData: false).map(\.entry)
     }
@@ -33,6 +35,7 @@ public enum Archive {
     /// successful walk implies integrity. Cooperatively cancellable.
     @discardableResult
     public static func test(at url: URL) async throws -> [Entry] {
+        try await Sandbox.authorize(url)
         let reader = try newReader(at: url)
         return try collectEntries(reader: reader, readData: true).map(\.entry)
     }
@@ -47,6 +50,7 @@ public enum Archive {
 
     /// Returns the decompressed bytes of `entryPath`. Used by `unzip -p`.
     public static func read(entry entryPath: String, from url: URL) async throws -> Data {
+        try await Sandbox.authorize(url)
         let reader = try newReader(at: url)
         return try readSingleEntry(reader: reader, path: entryPath)
     }
@@ -63,6 +67,13 @@ public enum Archive {
     /// SwiftGH's `gh run view --log` (header per file). Set
     /// `printHeaders: false` to omit the prefix. Cooperatively
     /// cancellable per entry.
+    ///
+    /// **Sandbox note.** This function does NOT call
+    /// `Sandbox.authorize` — the caller already opened the
+    /// `FileHandle` from a URL, and gating happens at that open
+    /// site. Callers must ensure the URL backing `handle` was
+    /// authorized before this call. The archive bytes (`data`) are
+    /// in-memory and don't go through the URL gate.
     public static func streamEntries(
         from data: Data,
         to handle: FileHandle,
@@ -97,6 +108,8 @@ public enum Archive {
     public static func extract(
         from url: URL, options: ExtractOptions
     ) async throws -> [Entry] {
+        try await Sandbox.authorize(url)
+        try await Sandbox.authorize(options.destination)
         let reader = try newReader(at: url)
         return try extract(reader: reader, options: options)
     }
@@ -105,6 +118,7 @@ public enum Archive {
     public static func extract(
         from data: Data, options: ExtractOptions
     ) async throws -> [Entry] {
+        try await Sandbox.authorize(options.destination)
         let reader = try newReader(data: data)
         return try extract(reader: reader, options: options)
     }
@@ -199,6 +213,10 @@ public enum Archive {
         paths: [URL],
         options: CreateOptions = .init()
     ) async throws -> [Entry] {
+        try await Sandbox.authorize(zipURL)
+        for input in paths {
+            try await Sandbox.authorize(input)
+        }
         // Remove an existing archive — Info-ZIP appends to existing
         // archives by default but our minimal port replaces them.
         if FileManager.default.fileExists(atPath: zipURL.path) {

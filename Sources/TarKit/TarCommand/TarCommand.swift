@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import TarKit
+import Sandbox
 
 /// Pure-Swift port of `tar(1)`. Covers the common create / extract /
 /// list flows plus the `-z` gzip filter — enough for the typical
@@ -108,8 +109,8 @@ public struct TarCommand: AsyncParsableCommand {
         else if xz { compression = .xz }
         else if zstd { compression = .zstd }
         else { compression = .none }
-        let url = URL(fileURLWithPath: file)
-        let inputs = args.map { URL(fileURLWithPath: $0) }
+        let url = Sandbox.resolve(file)
+        let inputs = args.map { Sandbox.resolve($0) }
         let opts = CreateOptions(
             compression: compression,
             recursive: true,
@@ -125,13 +126,12 @@ public struct TarCommand: AsyncParsableCommand {
     }
 
     private func runExtract(file: String) async throws {
-        let archiveURL = URL(fileURLWithPath: file)
+        let archiveURL = Sandbox.resolve(file)
         let dest: URL
         if let dir = changeDir {
-            dest = URL(fileURLWithPath: dir, isDirectory: true)
+            dest = Sandbox.resolve(dir)
         } else {
-            dest = URL(fileURLWithPath: FileManager.default.currentDirectoryPath,
-                       isDirectory: true)
+            dest = Sandbox.currentDirectory
         }
         let opts = ExtractOptions(
             destination: dest,
@@ -148,7 +148,8 @@ public struct TarCommand: AsyncParsableCommand {
     }
 
     private func runList(file: String) async throws {
-        let url = URL(fileURLWithPath: file)
+        let url = Sandbox.resolve(file)
+        try await Sandbox.authorize(url)
         let entries = try await TarKit.Archive.list(at: url)
         for e in entries {
             if verbose {

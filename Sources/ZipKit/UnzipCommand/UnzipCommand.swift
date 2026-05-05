@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import ZipKit
+import Sandbox
 
 /// Pure-Swift port of Info-ZIP's `unzip(1)`. Covers the most-used
 /// flags from `unzip -h`. Same exit-code conventions: 0 = success,
@@ -89,7 +90,7 @@ public struct UnzipCommand: AsyncParsableCommand {
             return
         }
 
-        let archiveURL = URL(fileURLWithPath: archive)
+        let archiveURL = Sandbox.resolve(archive)
         if list {
             try await doList(source: .url(archiveURL), includes: includes, excludes: excludes)
             return
@@ -211,7 +212,7 @@ public struct UnzipCommand: AsyncParsableCommand {
         // `-o` behavior. Pass `-n` to refuse overwrites.
 
         let options = ExtractOptions(
-            destination: URL(fileURLWithPath: destination),
+            destination: Sandbox.resolve(destination),
             overwrite: mode,
             junkPaths: junkPaths,
             includes: includes,

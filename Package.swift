@@ -174,6 +174,7 @@ let package = Package(
         .target(
             name: "ZipKit",
             dependencies: [
+                "Sandbox",
                 .product(name: "Archive", package: "swift-archive"),
             ],
             path: "Sources/ZipKit/Lib"
@@ -182,6 +183,7 @@ let package = Package(
             name: "ZipCommand",
             dependencies: [
                 "ZipKit",
+                "Sandbox",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ZipKit/ZipCommand"
@@ -190,6 +192,7 @@ let package = Package(
             name: "UnzipCommand",
             dependencies: [
                 "ZipKit",
+                "Sandbox",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ZipKit/UnzipCommand"
@@ -226,6 +229,7 @@ let package = Package(
         .target(
             name: "TarKit",
             dependencies: [
+                "Sandbox",
                 .product(name: "Archive", package: "swift-archive"),
             ],
             path: "Sources/TarKit/Lib"
@@ -234,6 +238,7 @@ let package = Package(
             name: "TarCommand",
             dependencies: [
                 "TarKit",
+                "Sandbox",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/TarKit/TarCommand"
