@@ -1,4 +1,5 @@
 import Foundation
+import Sandbox
 import Yams
 
 /// Parsed `~/.config/gh/hosts.yml`.
@@ -65,16 +66,13 @@ public struct HostsFileStore: Sendable {
     }
 
     public static var defaultPath: URL {
-        let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
         let configDir: URL
-        if let xdg, !xdg.isEmpty {
+        if let xdg = Sandbox.env("XDG_CONFIG_HOME"), !xdg.isEmpty {
             configDir = URL(fileURLWithPath: xdg, isDirectory: true)
         } else {
-            // `homeDirectoryForCurrentUser` is iOS-unavailable. Fall
-            // back to $HOME / NSHomeDirectory().
-            let home = ProcessInfo.processInfo.environment["HOME"]
-                ?? NSHomeDirectory()
-            configDir = URL(fileURLWithPath: home, isDirectory: true)
+            // Sandbox.homeDirectory handles iOS-availability internally
+            // (NSHomeDirectory on iOS, FileManager on macOS/Linux).
+            configDir = Sandbox.homeDirectory
                 .appendingPathComponent(".config", isDirectory: true)
         }
         return configDir

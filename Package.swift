@@ -586,6 +586,7 @@ let package = Package(
             name: "GitHub",
             dependencies: [
                 "ForgeKit",
+                "Sandbox",
                 "ZipKit",
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
@@ -603,6 +604,7 @@ let package = Package(
                 "ForgeKit",
                 "JqKit",
                 "Lz4Kit",
+                "Sandbox",
                 "SwiftGit",
                 "TarKit",
                 "XzKit",

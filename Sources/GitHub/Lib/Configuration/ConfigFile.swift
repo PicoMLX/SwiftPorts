@@ -1,4 +1,5 @@
 import Foundation
+import Sandbox
 import Yams
 
 /// Parsed `~/.config/gh/config.yml`. Global preferences (no per-host
@@ -32,18 +33,12 @@ public struct ConfigFileStore: Sendable {
     }
 
     public static var defaultPath: URL {
-        let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
         let dir: URL
-        if let xdg, !xdg.isEmpty {
+        if let xdg = Sandbox.env("XDG_CONFIG_HOME"), !xdg.isEmpty {
             dir = URL(fileURLWithPath: xdg, isDirectory: true)
         } else {
-            // `homeDirectoryForCurrentUser` is iOS-unavailable. Fall
-            // back to $HOME, then NSHomeDirectory(), then a sandboxed
-            // temp dir — embedders shouldn't be reading gh config from
-            // disk on iOS, but the type still needs to compile.
-            let home = ProcessInfo.processInfo.environment["HOME"]
-                ?? NSHomeDirectory()
-            dir = URL(fileURLWithPath: home, isDirectory: true)
+            // Sandbox.homeDirectory handles iOS-availability internally.
+            dir = Sandbox.homeDirectory
                 .appendingPathComponent(".config", isDirectory: true)
         }
         return dir

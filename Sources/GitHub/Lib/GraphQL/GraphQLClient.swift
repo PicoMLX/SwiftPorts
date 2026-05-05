@@ -2,6 +2,7 @@ import Foundation
 import HTTPTypes
 import HTTPTypesFoundation
 import Logging
+import Sandbox
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -78,6 +79,9 @@ public actor GraphQLClient {
         if let token = configuration.token {
             httpRequest.headerFields[.authorization] = "Bearer \(token)"
         }
+
+        // Sandbox boundary for the GraphQL endpoint.
+        try await Sandbox.authorize(configuration.graphQLURL)
 
         logger.debug("GraphQL POST \(configuration.graphQLURL.absoluteString)")
 
