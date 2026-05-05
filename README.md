@@ -1,5 +1,7 @@
 # SwiftPorts
 
+![SwiftPorts](Docs/SwiftPorts.jpg)
+
 Pure-Swift, cross-platform reimplementations of the CLI utilities you
 reach for when working with source repositories — so you can **embed
 them in apps instead of shelling out**.
