@@ -128,8 +128,19 @@ public enum Archive {
                                 excludes: options.excludes,
                                 caseInsensitive: options.caseInsensitive)
             else { return }
+            // sanitize returns:
+            //   nil  → hostile path (refuse archive)
+            //   ""   → legit no-op — skip
+            //   else → safe normalized relative path / basename
+            guard let safe = options.junkPaths
+                ? sanitizeBasename(path)
+                : sanitizeRelativePath(path)
+            else {
+                throw ZipKitError.unsafeEntryPath(native.pathname)
+            }
+            if safe.isEmpty { return }
 
-            let target = options.destination.appendingPathComponent(path)
+            let target = options.destination.appendingPathComponent(safe)
             let exists = FileManager.default.fileExists(atPath: target.path)
             if exists {
                 switch options.overwrite {
@@ -149,8 +160,13 @@ public enum Archive {
                         at: target.deletingLastPathComponent(),
                         withIntermediateDirectories: true)
                     if let link = native.symlinkTarget {
+                        // Preserve the raw symlink target string —
+                        // `URL(fileURLWithPath:)` would resolve a
+                        // relative target against cwd and lose its
+                        // relativity entirely.
                         try FileManager.default.createSymbolicLink(
-                            at: target, withDestinationURL: URL(fileURLWithPath: link))
+                            atPath: target.path,
+                            withDestinationPath: link)
                     }
                 default: // .regular and other "file-like" types
                     try FileManager.default.createDirectory(
@@ -402,6 +418,45 @@ public enum Archive {
         } catch {
             throw ZipKitError.archiveOpenFailed(error.localizedDescription)
         }
+    }
+
+    /// Returns a normalized relative path under the destination root.
+    /// `nil` means the entry is hostile (absolute, drive-letter, or
+    /// `..`-traversing) and the caller should refuse the archive.
+    /// An empty string means the entry resolved to a no-op (e.g. `.`
+    /// or `./`) and the caller should skip it silently.
+    private static func sanitizeRelativePath(_ raw: String) -> String? {
+        if raw.isEmpty { return "" }
+        if raw.hasPrefix("/") { return nil }
+        if raw.hasPrefix("\\") { return nil }
+        if raw.count >= 2 {
+            let chars = Array(raw)
+            if chars[1] == ":" && chars[0].isLetter { return nil }
+        }
+        let normalized = raw.replacingOccurrences(of: "\\", with: "/")
+        var out: [String] = []
+        for piece in normalized.split(
+            separator: "/", omittingEmptySubsequences: true)
+        {
+            let s = String(piece)
+            if s == "." { continue }
+            if s == ".." { return nil }
+            out.append(s)
+        }
+        return out.joined(separator: "/")
+    }
+
+    /// Used for junk-paths extraction (`unzip -j`). The basename has
+    /// already been collapsed via NSString.lastPathComponent. Empty /
+    /// `.` resolves to skip; `..`, drive letters, and embedded
+    /// separators are hostile.
+    private static func sanitizeBasename(_ raw: String) -> String? {
+        if raw.isEmpty { return "" }
+        if raw == "." { return "" }
+        if raw == ".." { return nil }
+        if raw.hasPrefix("/") || raw.hasPrefix("\\") { return nil }
+        if raw.contains("/") || raw.contains("\\") { return nil }
+        return raw
     }
 
     private static func shouldInclude(

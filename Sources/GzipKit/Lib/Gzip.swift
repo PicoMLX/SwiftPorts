@@ -96,11 +96,20 @@ public enum Gzip {
                         output.append(outPtr.baseAddress!, count: written)
                     }
                     switch r {
-                    case Z_STREAM_END: done = true
-                    case Z_OK: break
+                    case Z_STREAM_END:
+                        done = true
+                    case Z_OK:
+                        break
                     case Z_BUF_ERROR:
-                        // Output buffer full but more data may remain.
-                        if stream.avail_in == 0 { done = true }
+                        // Z_BUF_ERROR = inflate made no progress. We
+                        // hand it the entire input upfront with a
+                        // 64 KB output window each iteration, so the
+                        // only realistic cause is starved input —
+                        // i.e. the gzip stream is truncated. Treat
+                        // as an error rather than silently returning
+                        // partial bytes as if they were complete.
+                        throw GzipKitError.decompressionFailed(
+                            "incomplete gzip stream (truncated input)")
                     default:
                         throw GzipKitError.decompressionFailed(
                             "inflate returned \(r)")

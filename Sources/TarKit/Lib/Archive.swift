@@ -65,9 +65,16 @@ public enum Archive {
         try reader.forEachEntry { native, reader in
             let stripped = stripComponents(
                 path: native.pathname, count: options.stripComponents)
-            guard !stripped.isEmpty else { return }
+            // sanitize returns:
+            //   nil  → hostile path (refuse archive)
+            //   ""   → legit no-op (e.g. `./` or fully stripped) — skip
+            //   else → safe normalized relative path
+            guard let safe = sanitizeRelativePath(stripped) else {
+                throw TarKitError.unsafeEntryPath(native.pathname)
+            }
+            if safe.isEmpty { return }
 
-            let target = options.destination.appendingPathComponent(stripped)
+            let target = options.destination.appendingPathComponent(safe)
             let exists = fm.fileExists(atPath: target.path)
             if exists && !options.overwrite { return }
 
@@ -82,9 +89,12 @@ public enum Archive {
                         withIntermediateDirectories: true)
                     if exists { try? fm.removeItem(at: target) }
                     if let link = native.symlinkTarget {
+                        // Preserve the raw symlink target string —
+                        // `URL(fileURLWithPath:)` would resolve it
+                        // against cwd and turn relative links absolute.
                         try fm.createSymbolicLink(
-                            at: target,
-                            withDestinationURL: URL(fileURLWithPath: link))
+                            atPath: target.path,
+                            withDestinationPath: link)
                     }
                 default:
                     try fm.createDirectory(
@@ -94,6 +104,8 @@ public enum Archive {
                     let bytes = try reader.readData()
                     try bytes.write(to: target)
                 }
+            } catch let e as TarKitError {
+                throw e
             } catch {
                 throw TarKitError.writeFailed(
                     target, underlying: error.localizedDescription)
@@ -110,6 +122,33 @@ public enum Archive {
         if components.count <= count { return "" }
         components.removeFirst(count)
         return components.joined(separator: "/")
+    }
+
+    /// Returns a normalized relative path under the destination root.
+    /// `nil` means the entry is hostile (absolute, drive-letter, or
+    /// `..`-traversing) and the caller should refuse the archive.
+    /// An empty string means the entry resolved to a no-op (e.g. `.`
+    /// or `./`) and the caller should skip it silently — matching
+    /// GNU tar's behavior on its own `./` leading entry.
+    private static func sanitizeRelativePath(_ raw: String) -> String? {
+        if raw.isEmpty { return "" }
+        if raw.hasPrefix("/") { return nil }
+        if raw.hasPrefix("\\") { return nil }
+        if raw.count >= 2 {
+            let chars = Array(raw)
+            if chars[1] == ":" && chars[0].isLetter { return nil }
+        }
+        let normalized = raw.replacingOccurrences(of: "\\", with: "/")
+        var out: [String] = []
+        for piece in normalized.split(
+            separator: "/", omittingEmptySubsequences: true)
+        {
+            let s = String(piece)
+            if s == "." { continue }
+            if s == ".." { return nil }
+            out.append(s)
+        }
+        return out.joined(separator: "/")
     }
 
     // MARK: Create

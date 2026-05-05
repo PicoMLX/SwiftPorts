@@ -146,7 +146,12 @@ let package = Package(
         ),
         .testTarget(
             name: "ZipKitTests",
-            dependencies: ["ZipKit"]
+            dependencies: [
+                "ZipKit",
+                // Same rationale as TarKitTests — needed to write
+                // malicious zips for the path-traversal extract guards.
+                .product(name: "Archive", package: "swift-archive"),
+            ]
         ),
         .testTarget(
             name: "ZipTests",
@@ -180,7 +185,14 @@ let package = Package(
         ),
         .testTarget(
             name: "TarKitTests",
-            dependencies: ["TarKit"]
+            dependencies: [
+                "TarKit",
+                // Direct libarchive access so tests can mint archives
+                // with hostile entry names that our own create() refuses
+                // to produce — needed to verify the extract path-
+                // traversal guards.
+                .product(name: "Archive", package: "swift-archive"),
+            ]
         ),
         .testTarget(
             name: "TarTests",

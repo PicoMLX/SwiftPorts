@@ -6,6 +6,10 @@ public enum ZipKitError: Error, LocalizedError, Sendable {
     case entryNotFound(String)
     case destinationExists(URL)
     case writeFailed(URL, underlying: String)
+    /// Archive entry contains a path that would escape the destination
+    /// (absolute, drive-letter, or `..`-traversing). Refusing to extract
+    /// is the only safe response for untrusted archives.
+    case unsafeEntryPath(String)
 
     public var errorDescription: String? {
         switch self {
@@ -19,6 +23,8 @@ public enum ZipKitError: Error, LocalizedError, Sendable {
             return "Destination already exists: \(url.path) (use --overwrite or --never-overwrite to choose)"
         case .writeFailed(let url, let underlying):
             return "Couldn't write \(url.path): \(underlying)"
+        case .unsafeEntryPath(let path):
+            return "Refusing to extract unsafe entry path: \(path)"
         }
     }
 }
