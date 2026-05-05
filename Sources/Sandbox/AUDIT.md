@@ -439,22 +439,117 @@ ForgeKit's three subsystems (Git via Process, Browser, Clipboard) construct exec
 
 ---
 
-## 6 — Audit gate verdict
+## 6 — Resolved direction (after design discussion on issue #15)
 
-**Sites that fit the proposed `Sandbox` model cleanly without further design discussion:** all gated sites except those raised in § 5.
+The eight open questions from § 5 were discussed and resolved. Recorded here so an agent picking this branch up has the v1 contract written down.
 
-**Sites raised for direction in § 5:**
-- 5.1 — CLI relative-path resolution → proposed: add `Sandbox.currentDirectory`
-- 5.2 — Env-var ambient reads (general) → proposed: out of v1 scope, follow-up issue. Subcase: JqKit `env`/`$ENV` filter exposure → proposed: feed empty dict when `Sandbox.current != nil`.
-- 5.3 — `HostsFile`/`ConfigFile` config-path refactor → proposed: switch to `Sandbox.homeDirectory`
-- 5.4 — `ZipKit.streamEntries` caller-supplied `FileHandle` → proposed: doc note, no code change
-- 5.5 — `ProgressReporter.isLocalURL` probe → proposed: gate the probe, fail-closed
-- 5.6 — libgit2 internal ops below the Swift boundary → proposed: gate at Swift level, defer libgit2 callbacks to follow-up
-- 5.7 — Stdio → proposed: explicitly out of scope, doc note
-- 5.8 — Process executable URLs → proposed: gate as URLs, no design change
+### 6.1 — Unifying primitive: `Sandbox` shadows `ProcessInfo` reads
 
-**Region-set deltas:** add `currentDirectory` to the `Sandbox` struct (§ 4(a)). Foundation's other static URL accessors stay in the struct for embedder API completeness even though no SwiftPorts internal site consumes them today.
+`Sandbox` shadows the two `ProcessInfo.processInfo` reads that SwiftPorts code consumes — `environment` and `arguments` — by **code convention**, not a runtime hook. Every SwiftPorts source site that today reads `ProcessInfo.processInfo.environment` or `CommandLine.arguments` migrates to `Sandbox.environment` / `Sandbox.arguments` (or per-key sugar `Sandbox.env(_:)`).
 
-**Recommendation:** address § 5.1, 5.2-jq, 5.3, 5.5 inline as part of Phase 2 retrofit; defer 5.2-general (env-virtualization) and 5.6-tier-2 (libgit2 callbacks) to follow-up issues. § 5.4, 5.7, 5.8 are documentation-only.
+**Honest scope.** This is *not* a process-wide override of `ProcessInfo`. Foundation internals, libgit2's own `getenv()` calls, and any third-party Swift dependency still see the real process env. The shadow only applies to code we control and migrate. v1 makes no promise about env isolation inside libgit2 or Foundation.
 
-If the maintainer agrees with these answers, Step 2 (the `Sandbox` module + retrofit) can proceed. If any answer needs revisiting, please comment on issue #15.
+**Default-deny.** When `Sandbox.current != nil`, the embedder is fully in charge — the default `environment: { [:] }` and `arguments: { [] }` closures return empty. SwiftPorts sees no env / no argv. Embedders who want host passthrough write it explicitly: `environment: { ProcessInfo.processInfo.environment }`. Same posture as the URL gate (default-deny when configured, default-permit when `Sandbox.current == nil`).
+
+**Closure shape.** Both are `@Sendable () -> ...` closures, not stored snapshots. This bridges cleanly to a class-backed mutable env in a future Shell type without `@TaskLocal` re-binding on every mutation.
+
+### 6.2 — Per-question resolutions
+
+| § | Question | v1 resolution |
+|---|---|---|
+| 5.1 | CLI relative-path resolution | `Sandbox.currentDirectory` (computed, derived from `PWD` env key — falls back to process CWD when `current == nil`). CLI commands resolve relative argv via `Sandbox.currentDirectory`. Library APIs precondition on absolute URLs. **No separate stored field — single source of truth is `environment`'s `PWD`.** |
+| 5.2-general | Six env-reads in `Sources/` | Migrate to `Sandbox.env(_:)` / `Sandbox.environment`. v1 scope. |
+| 5.2-jq | JqKit `env` / `$ENV` filter exposure | Read via `Sandbox.environment`. v1 scope. |
+| 5.3 | `HostsFile` / `ConfigFile` config-path | Read via `Sandbox.env("XDG_CONFIG_HOME")` falling back to `Sandbox.homeDirectory.appendingPathComponent(".config", ...)`. iOS-availability handled in `Sandbox.homeDirectory`'s static fallback (`#if os(iOS)…` → `NSHomeDirectory()`). |
+| 5.4 | `ZipKit.streamEntries` caller-supplied `FileHandle` | Doc note. Caller is responsible for authorizing the URL backing the handle. No code change. |
+| 5.5 | `ProgressReporter.isLocalURL` probe | Doc note. The probe is metadata-only (UX classification); the actual file open by libgit2 falls under § 5.6 anyway. No code change. |
+| 5.6 | libgit2 internal network/FS ops | Tier-1 only in v1: gate URLs at the Swift call boundary (`git_clone` source URL + dest path, `git_repository_open_ext` path, `git_repository_init_ext` path). Tier-2 (libgit2 transport / credentials / certificate callbacks) deferred to follow-up issue. |
+| 5.7 | `FileHandle.standardInput/Output/Error` | Out of scope. Doc note. Embedders virtualize stdio at the `AsyncParsableCommand` invocation boundary. |
+| 5.8 | Process executable URLs | Already covered: insert `try await Sandbox.authorize(executableURL)` at the three `Process.run()` sites in ForgeKit. Under `rooted(at:)`, denied; embedders use `SwiftGit.GitClient` (libgit2) for git, accept that browser/clipboard don't function. |
+
+### 6.3 — Final `Sandbox` API shape (locked for Phase 1 implementation)
+
+```swift
+public struct Sandbox: Sendable {
+    @TaskLocal public static var current: Sandbox?
+
+    // Foundation URL.<X>Directory mirror (stored)
+    public let documentsDirectory: URL
+    public let downloadsDirectory: URL
+    public let libraryDirectory: URL
+    public let moviesDirectory: URL
+    public let musicDirectory: URL
+    public let picturesDirectory: URL
+    public let sharedPublicDirectory: URL
+    public let temporaryDirectory: URL
+    public let trashDirectory: URL
+    public let userDirectory: URL
+    public let homeDirectory: URL
+    public let cachesDirectory: URL
+
+    // ProcessInfo shadow (closures)
+    public let environment: @Sendable () -> [String: String]
+    public let arguments: @Sendable () -> [String]
+
+    // URL gate
+    private let _authorize: @Sendable (URL) async throws -> Void
+    public func authorize(_ url: URL) async throws { try await _authorize(url) }
+
+    // currentDirectory derived from PWD env key, NOT a stored field
+    // (single source of truth: environment closure)
+
+    // Static accessors with platform-aware fallbacks when current == nil
+
+    public static func authorize(_ url: URL) async throws
+    public static var environment: [String: String]
+    public static func env(_ key: String) -> String?
+    public static var arguments: [String]
+    public static var currentDirectory: URL
+    // ... per-region accessors (homeDirectory/cachesDirectory/temporaryDirectory/...)
+
+    // Built-in factories
+    public static func rooted(at root: URL,
+                              allowedHosts: [String] = [],
+                              environment: (@Sendable () -> [String: String])? = nil,
+                              arguments: (@Sendable () -> [String])? = nil) -> Sandbox
+
+    public static func appContainer(id: String? = nil,
+                                    allowedHosts: [String] = [],
+                                    environment: (@Sendable () -> [String: String])? = nil,
+                                    arguments: (@Sendable () -> [String])? = nil) -> Sandbox
+
+    public struct Denial: Error, Sendable {
+        public let url: URL
+        public let reason: String
+        public let suggestion: URL?
+    }
+}
+```
+
+`Sandbox.rooted(at:)` populates `environment` with `["PWD": root.path]` if the caller doesn't supply one, so `Sandbox.currentDirectory` lands at root by default for the simple case.
+
+### 6.4 — Future `Shell` composition (informative, not v1)
+
+If/when SwiftPorts (or an embedder like SwiftBash) introduces a `Shell` type for script execution, it composes with `Sandbox` rather than replacing it:
+
+```swift
+public final class Shell {
+    @TaskLocal public static var current: Shell
+    public var sandbox: Sandbox?
+    public var environment: Environment
+
+    public func withCurrent<T>(_ body: () async throws -> T) async rethrows -> T {
+        try await Shell.$current.withValue(self) {
+            try await Sandbox.$current.withValue(self.sandbox) {
+                try await body()
+            }
+        }
+    }
+}
+```
+
+Shell binds itself task-locally and re-binds Sandbox in the same scope. SwiftPorts code keeps reading `Sandbox.current`; it neither knows nor cares that a Shell wrapped the bind. Apps without Shell still bind `Sandbox.$current.withValue(...)` directly — Sandbox stays usable without Shell.
+
+### 6.5 — Ready to proceed
+
+Step 2 (Phase 1 module + Phase 2 retrofit) proceeds based on this resolved direction. Any future deviation is recorded as a new issue.
