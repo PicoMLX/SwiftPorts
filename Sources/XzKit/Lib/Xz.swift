@@ -83,10 +83,18 @@ public enum Xz {
         algorithm: compression_algorithm,
         errorMap: (String) -> XzKitError
     ) throws -> Data {
+        // `compression_stream_init` only inspects the `state` slot;
+        // the other fields get overwritten before each
+        // `compression_stream_process` call. Use a placeholder
+        // pointer that doesn't own memory so we don't need a paired
+        // `deallocate()` (the previous version allocated a 0-byte
+        // buffer that was never freed — a small but real leak in
+        // long-running processes).
+        let placeholder = UnsafeMutablePointer<UInt8>(bitPattern: 1)!
         var stream = compression_stream(
-            dst_ptr: UnsafeMutablePointer<UInt8>.allocate(capacity: 0),
+            dst_ptr: placeholder,
             dst_size: 0,
-            src_ptr: UnsafePointer<UInt8>(bitPattern: 1)!,
+            src_ptr: UnsafePointer(placeholder),
             src_size: 0,
             state: nil)
         let initStatus = compression_stream_init(&stream, operation, algorithm)
