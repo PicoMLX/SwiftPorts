@@ -110,30 +110,35 @@ jobs:
         # x64-windows-static-md gives us .lib files linked against
         # the dynamic UCRT, which matches Swift's default link mode.
         #
-        # libarchive (and our CBzip2 / CLZMA / CZstd shims) use Unix-
-        # style link names (`-lz`, `-lbz2`, `-llzma`, `-lzstd`) which
-        # lld-link translates to `z.lib`, `bz2.lib`, `lzma.lib`,
-        # `zstd.lib`. vcpkg uses Windows-style names (`zlib.lib`,
-        # `bz2.lib` (matches), `lzma.lib` (matches), `zstd.lib`
-        # (matches)). Drop a `z.lib` alias next to `zlib.lib` so
-        # `-lz` resolves; the rest already line up.
+        # libarchive uses the Unix link name `-lz`, which lld-link
+        # translates to `z.lib`. vcpkg ships `zlib.lib`. Drop an
+        # alias copy so the link resolves; bz2 / liblzma / libzstd
+        # all happen to ship under the names lld-link expects.
+        #
+        # We install only zlib here — bz2 / lzma / zstd are not
+        # needed by libarchive's CArchive (only GzipSupport trait
+        # is enabled in Package.swift) and the Bzip2Kit / XzKit /
+        # ZstdKit Swift modules are gated to non-Apple-mobile via
+        # `condition: .when(platforms: [.macOS, .linux, .windows])`.
+        # Their corresponding C shims still need the headers + libs
+        # though — install all four so Bzip2Kit / XzKit / ZstdKit
+        # link cleanly.
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib bzip2 liblzma zstd --triplet x64-windows-static-md
           $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          $zlib = Get-ChildItem -Path "$base\lib" -Filter "zlib*.lib" -File | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $zlib) {
-            Write-Error "could not find zlib.lib under $base\lib"
-            Get-ChildItem -Recurse "$base" | Select-Object FullName
-            exit 1
+          # Always print the inventory first so a future naming mismatch
+          # is immediately visible in CI logs (last run lost this output
+          # because it ran after a non-terminating Write-Error).
+          Write-Host "vcpkg .lib inventory under $base\lib:"
+          Get-ChildItem "$base\lib" -Filter "*.lib" -ErrorAction SilentlyContinue |
+            Select-Object Name | Format-Table -AutoSize | Out-Host
+          $zlibLib = Join-Path "$base\lib" "zlib.lib"
+          if (-not (Test-Path $zlibLib)) {
+            throw "vcpkg did not produce zlib.lib at $zlibLib"
           }
-          Copy-Item -Force $zlib "$base\lib\z.lib"
-          # Diagnostic: list everything vcpkg dropped, so a future
-          # naming-mismatch surfaces in CI logs immediately.
-          Write-Host "vcpkg .lib inventory:"
-          Get-ChildItem "$base\lib" -Filter "*.lib" | Select-Object Name
+          Copy-Item -Force $zlibLib "$base\lib\z.lib"
           "VCPKG_BASE=$base" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "ZLIB_BASE=$base"  | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build (Windows)
         shell: pwsh
         run: |
