@@ -1,3 +1,8 @@
+// libbz2/liblzma/libzstd are not in the iOS / tvOS / watchOS / visionOS
+// SDK. Gate the whole module to platforms where the system library is
+// available; iOS support requires vendoring sources.
+#if os(macOS) || os(Linux) || os(Windows) || os(Android)
+
 import ArgumentParser
 import Foundation
 import ZstdKit
@@ -223,3 +228,5 @@ enum ZstdEngine {
         FileHandle.standardOutput.write(output)
     }
 }
+
+#endif // platform gate

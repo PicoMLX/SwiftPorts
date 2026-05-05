@@ -1,3 +1,9 @@
+// libbz2 isn't in the iOS / tvOS / watchOS / visionOS SDK — gate the
+// whole module to platforms where the system library is available.
+// To support Apple-mobile we'd need to vendor the libbz2 sources (a
+// few thousand lines of MIT-licensed C); not worth the complexity
+// until a concrete consumer needs it.
+#if os(macOS) || os(Linux) || os(Windows) || os(Android)
 import Foundation
 import CBzip2
 
@@ -180,3 +186,5 @@ private func reinterpretAsCChar(
 ) -> UnsafeMutablePointer<CChar> {
     UnsafeMutableRawPointer(p).assumingMemoryBound(to: CChar.self)
 }
+
+#endif // platform gate

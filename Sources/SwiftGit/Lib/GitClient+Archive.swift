@@ -38,9 +38,12 @@ extension GitClient {
         to output: URL,
         prefix: String? = nil
     ) async throws {
-        let entries = try collectBlobEntries(
+        let walk = try collectBlobEntries(
             treeish: treeish, prefix: normalizedPrefix(prefix))
-        try writeArchive(entries: entries, to: output, format: format)
+        try writeArchive(
+            entries: walk.entries,
+            mtime: walk.mtime,
+            to: output, format: format)
     }
 
     fileprivate struct BlobEntry {
@@ -51,9 +54,20 @@ extension GitClient {
         let bytes: Data
     }
 
+    fileprivate struct WalkResult {
+        let entries: [BlobEntry]
+        /// Time stamped on every output archive entry. Pulled from the
+        /// commit (or tag→commit) the treeish resolves to so the same
+        /// SHA produces a byte-identical archive across runs — matches
+        /// upstream `git archive`'s reproducibility guarantee. Falls
+        /// back to `Date()` when the treeish is a raw tree (no commit
+        /// context, no canonical timestamp).
+        let mtime: Date
+    }
+
     private func collectBlobEntries(
         treeish: String, prefix: String
-    ) throws -> [BlobEntry] {
+    ) throws -> WalkResult {
         try withRepository { repo in
             var obj: OpaquePointer?
             try check(treeish.withCString { name in
@@ -65,10 +79,21 @@ extension GitClient {
             try check(git_object_peel(&tree, obj, GIT_OBJECT_TREE))
             defer { git_object_free(tree) }
 
+            // Try to peel to a commit for the canonical timestamp.
+            // Raw-tree SHAs (rare in `git archive` use) have no commit
+            // context — fall back to current wall-clock.
+            var mtime = Date()
+            var commit: OpaquePointer?
+            if git_object_peel(&commit, obj, GIT_OBJECT_COMMIT) == 0 {
+                defer { git_object_free(commit) }
+                let unix = git_commit_time(commit)
+                mtime = Date(timeIntervalSince1970: TimeInterval(unix))
+            }
+
             var collected: [BlobEntry] = []
             try walkBlobs(
                 repo: repo, tree: tree, prefix: prefix, into: &collected)
-            return collected
+            return WalkResult(entries: collected, mtime: mtime)
         }
     }
 
@@ -139,6 +164,7 @@ extension GitClient {
 
     private func writeArchive(
         entries: [BlobEntry],
+        mtime: Date,
         to output: URL,
         format: GitArchiveFormat
     ) throws {
@@ -164,7 +190,7 @@ extension GitClient {
                 size: Int64(entry.isSymlink ? 0 : entry.bytes.count),
                 fileType: entry.isSymlink ? .symbolicLink : .regular,
                 permissions: entry.mode,
-                modificationDate: Date(),
+                modificationDate: mtime,
                 symlinkTarget: entry.isSymlink
                     ? String(data: entry.bytes, encoding: .utf8)
                     : nil)

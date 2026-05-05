@@ -1,3 +1,8 @@
+// libbz2/liblzma/libzstd are not in the iOS / tvOS / watchOS / visionOS
+// SDK. Gate the whole module to platforms where the system library is
+// available; iOS support requires vendoring sources.
+#if os(macOS) || os(Linux) || os(Windows) || os(Android)
+
 import Foundation
 import CZstd
 
@@ -62,6 +67,16 @@ public enum Zstd {
     /// concatenated frames natively — zstd's streaming decoder loops
     /// across frame boundaries.
     public static func decompress(_ data: Data) throws -> Data {
+        // Empty input is never a valid zstd stream — at minimum a
+        // 4-byte magic + frame header + epilogue must be present.
+        // Without this check the loop below would not iterate, leave
+        // `lastResult` at zero, and we'd return Data() as if decoding
+        // had succeeded, silently accepting truncated artifacts.
+        guard !data.isEmpty else {
+            throw ZstdKitError.decompressionFailed(
+                "incomplete zstd stream (empty input)")
+        }
+
         guard let dctx = ZSTD_createDCtx() else {
             throw ZstdKitError.decompressionFailed("ZSTD_createDCtx returned NULL")
         }
@@ -169,3 +184,5 @@ public enum Zstd {
         throw ZstdKitError.cannotInferOutputName(source)
     }
 }
+
+#endif // platform gate

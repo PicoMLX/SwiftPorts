@@ -37,11 +37,18 @@ struct GitClientArchiveTests {
     }
 
     @discardableResult
-    private func runGit(_ args: [String], in dir: URL) throws -> String {
+    private func runGit(
+        _ args: [String], in dir: URL, env: [String: String] = [:]
+    ) throws -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = ["git"] + args
         p.currentDirectoryURL = dir
+        if !env.isEmpty {
+            var merged = ProcessInfo.processInfo.environment
+            for (k, v) in env { merged[k] = v }
+            p.environment = merged
+        }
         let out = Pipe(); let err = Pipe()
         p.standardOutput = out; p.standardError = err
         try p.run()
@@ -120,6 +127,38 @@ struct GitClientArchiveTests {
         // PKZIP local-file-header magic: PK\x03\x04
         let head = try FileHandle(forReadingFrom: archive).readData(ofLength: 4)
         #expect(head == Data([0x50, 0x4B, 0x03, 0x04]))
+    }
+
+    @Test("entry mtimes track the commit timestamp, not wall clock")
+    func reproducibleMtime() async throws {
+        let dir = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Force the commit's author/commit date to a known value via
+        // GIT_*_DATE env vars on the most recent commit.
+        let when = "2020-01-15T12:34:56+00:00"
+        try runGit(["commit", "--amend", "--no-edit",
+                    "--date", when], in: dir, env: [
+                        "GIT_COMMITTER_DATE": when,
+                        "GIT_AUTHOR_DATE": when,
+                    ])
+
+        let client = SwiftGit.GitClient(workingDirectory: dir)
+        let archive = dir.appendingPathComponent("snap.tar")
+        try await client.archiveTree(
+            treeish: "HEAD", format: .tar, to: archive)
+
+        let entries = try TarKit.Archive.list(at: archive)
+        let expected = ISO8601DateFormatter().date(from: when)!
+        // Allow ±2s tolerance for tar's per-second granularity.
+        for e in entries {
+            guard let m = e.modificationDate else {
+                Issue.record("entry \(e.path) has no modificationDate")
+                continue
+            }
+            let delta = abs(m.timeIntervalSince(expected))
+            #expect(delta < 2,
+                "entry \(e.path) mtime \(m) differs from commit \(expected) by \(delta)s")
+        }
     }
 
     @Test("--prefix prepends every entry path")

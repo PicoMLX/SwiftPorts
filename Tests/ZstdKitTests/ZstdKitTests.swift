@@ -1,3 +1,8 @@
+// libbz2/liblzma/libzstd are not in the iOS / tvOS / watchOS / visionOS
+// SDK. Gate the whole module to platforms where the system library is
+// available; iOS support requires vendoring sources.
+#if os(macOS) || os(Linux) || os(Windows) || os(Android)
+
 import Foundation
 import Testing
 @testable import ZstdKit
@@ -81,4 +86,15 @@ import Testing
             _ = try Zstd.decompress(truncated)
         }
     }
+
+    @Test func decompressRejectsEmptyInput() throws {
+        // An empty Data isn't a valid zstd frame; the streaming
+        // decoder previously returned Data() silently because the
+        // loop never iterated.
+        #expect(throws: ZstdKitError.self) {
+            _ = try Zstd.decompress(Data())
+        }
+    }
 }
+
+#endif // platform gate

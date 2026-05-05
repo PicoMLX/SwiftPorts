@@ -1,3 +1,8 @@
+// Bzip2Kit's engine is only available where libbz2 is — see the
+// platform gate in Sources/Bzip2Kit/Lib/Bzip2.swift. Mirror it here
+// so the iOS / tvOS / watchOS / visionOS framework build doesn't
+// reference symbols that don't exist on those platforms.
+#if os(macOS) || os(Linux) || os(Windows) || os(Android)
 import ArgumentParser
 import Foundation
 import Bzip2Kit
@@ -227,3 +232,5 @@ enum Bzip2Engine {
         FileHandle.standardOutput.write(output)
     }
 }
+
+#endif // platform gate

@@ -1,3 +1,8 @@
+// libbz2/liblzma/libzstd are not in the iOS / tvOS / watchOS / visionOS
+// SDK. Gate the whole module to platforms where the system library is
+// available; iOS support requires vendoring sources.
+#if os(macOS) || os(Linux) || os(Windows) || os(Android)
+
 import Foundation
 import Testing
 @testable import ZstdCommand
@@ -34,3 +39,5 @@ import Testing
         #expect(cmd.files == ["-"])
     }
 }
+
+#endif // platform gate
