@@ -77,4 +77,23 @@ import Testing
         let vars = reshaped["variables"] as? [String: Any]
         #expect((vars?["foo"] as? String) == "bar")
     }
+
+    @Test func graphqlBodyPreservesOperationNameAtTopLevel() throws {
+        // Multi-operation documents need operationName as a top-level
+        // field, not as a variable.
+        let reshaped = ApiCommand.reshapeGraphQLBody([
+            "query": "query A { a } query B { b }",
+            "operationName": "B",
+            "id": 7,
+        ])
+        #expect((reshaped["operationName"] as? String) == "B")
+        let vars = reshaped["variables"] as? [String: Any]
+        #expect(vars?["operationName"] == nil)
+        #expect((vars?["id"] as? Int) == 7)
+    }
+
+    @Test func graphqlBodyOmitsOperationNameWhenAbsent() throws {
+        let reshaped = ApiCommand.reshapeGraphQLBody(["query": "{ a }"])
+        #expect(reshaped["operationName"] == nil)
+    }
 }

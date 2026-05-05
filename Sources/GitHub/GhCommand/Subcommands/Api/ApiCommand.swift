@@ -136,14 +136,18 @@ struct ApiCommand: AsyncParsableCommand {
         return trimmed == "graphql"
     }
 
-    /// Reshape `{query: ..., variables: ..., ...rest}` into the GraphQL
-    /// request envelope `{query: ..., variables: {...}}`. Mirrors
-    /// upstream `gh api`'s GraphQL handling: extract `query`, treat
-    /// `variables` as the variables object (parsing it from a JSON
-    /// string if needed), and fold any remaining fields into variables.
+    /// Reshape `{query: ..., variables: ..., operationName: ..., ...rest}`
+    /// into the GraphQL request envelope `{query, variables, operationName}`.
+    /// Mirrors upstream `gh api`'s GraphQL handling: `query` and
+    /// `operationName` stay at the top level (operationName is needed
+    /// for multi-operation documents like `query A {…} query B {…}`),
+    /// `variables` is treated as the variables object (parsed from a
+    /// JSON string when the user passes `-F variables='{…}'`), and any
+    /// remaining `-f`/`-F` fields fold into variables.
     static func reshapeGraphQLBody(_ dict: [String: Any]) -> [String: Any] {
         var rest = dict
         let query = rest.removeValue(forKey: "query") ?? ""
+        let operationName = rest.removeValue(forKey: "operationName")
 
         var variables: [String: Any] = [:]
         if let rawVars = rest.removeValue(forKey: "variables") {
@@ -157,7 +161,9 @@ struct ApiCommand: AsyncParsableCommand {
         }
         for (k, v) in rest { variables[k] = v }
 
-        return ["query": query, "variables": variables]
+        var body: [String: Any] = ["query": query, "variables": variables]
+        if let operationName { body["operationName"] = operationName }
+        return body
     }
 
     private func splitField(_ s: String) throws -> (String, String) {
