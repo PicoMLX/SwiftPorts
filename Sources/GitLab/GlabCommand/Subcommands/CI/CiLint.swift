@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import GitLab
+import Sandbox
 
 struct CiLint: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -34,8 +35,9 @@ struct CiLint: AsyncParsableCommand {
             content = String(decoding: FileHandle.standardInput.availableData,
                              as: UTF8.self)
         } else {
-            content = try String(contentsOf: URL(fileURLWithPath: path),
-                                 encoding: .utf8)
+            let url = Sandbox.resolve(path)
+            try await Sandbox.authorize(url)
+            content = try String(contentsOf: url, encoding: .utf8)
         }
 
         let result: Response = try await client.send(

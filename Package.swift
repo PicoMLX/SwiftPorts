@@ -634,6 +634,7 @@ let package = Package(
             name: "GitLab",
             dependencies: [
                 "ForgeKit",
+                "Sandbox",
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "HTTPTypesFoundation", package: "swift-http-types"),
@@ -646,6 +647,7 @@ let package = Package(
                 "GitLab",
                 "ForgeKit",
                 "JqKit",
+                "Sandbox",
                 "SwiftGit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],

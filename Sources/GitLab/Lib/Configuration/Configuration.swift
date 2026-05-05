@@ -1,4 +1,5 @@
 import Foundation
+import Sandbox
 
 /// Static config for a GitLab API session: host, token, user agent.
 ///
@@ -22,9 +23,10 @@ public struct Configuration: Sendable {
     public static let defaultUserAgent =
         "SwiftPorts-glab/0.1 (+https://github.com/Cocoanetics/SwiftPorts)"
 
-    /// Build from the real process environment.
+    /// Build from the active sandbox's environment, or the real
+    /// process environment when no sandbox is set.
     public static func live() -> Configuration {
-        fromEnvironment(ProcessInfo.processInfo.environment)
+        fromEnvironment(Sandbox.environment)
     }
 
     /// Test-friendly: build from a dict of env-style keys. Honours the
