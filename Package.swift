@@ -71,6 +71,15 @@ let package = Package(
         .executable(name: "unzstd", targets: ["unzstd"]),
         .executable(name: "zstdcat", targets: ["zstdcat"]),
 
+        // Lz4Kit umbrella — single-file LZ4 frame format. Apple
+        // platforms back the engine with Compression.framework's
+        // LZ4_RAW; Linux/Windows use system liblz4.
+        .library(name: "Lz4Kit", targets: ["Lz4Kit"]),
+        .library(name: "Lz4Command", targets: ["Lz4Command"]),
+        .executable(name: "lz4", targets: ["lz4"]),
+        .executable(name: "unlz4", targets: ["unlz4"]),
+        .executable(name: "lz4cat", targets: ["lz4cat"]),
+
         // GitHub umbrella — gh(1) port.
         .library(name: "GitHub", targets: ["GitHub"]),
         .library(name: "GhCommand", targets: ["GhCommand"]),
@@ -275,6 +284,15 @@ let package = Package(
                 .apt(["libzstd-dev"]),
             ]
         ),
+        .systemLibrary(
+            name: "CLz4",
+            path: "Sources/CLz4",
+            pkgConfig: "liblz4",
+            providers: [
+                .brew(["lz4"]),
+                .apt(["liblz4-dev"]),
+            ]
+        ),
         .target(
             name: "GzipKit",
             dependencies: ["CZlib"],
@@ -448,6 +466,52 @@ let package = Package(
             dependencies: ["ZstdCommand", "ZstdKit"]
         ),
 
+        // MARK: Lz4Kit umbrella
+        // Apple platforms (macOS / iOS / tvOS / watchOS / visionOS)
+        // use Compression.framework's `LZ4_RAW` block coder; Linux
+        // / Windows use system liblz4. Both produce standard
+        // `.lz4` v1.6.x frames via our Swift framing layer. Android
+        // gated out (no liblz4 in NDK).
+        .target(
+            name: "Lz4Kit",
+            dependencies: [
+                .target(name: "CLz4",
+                        condition: .when(platforms: [.linux, .windows])),
+            ],
+            path: "Sources/Lz4Kit/Lib"
+        ),
+        .target(
+            name: "Lz4Command",
+            dependencies: [
+                "Lz4Kit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/Lz4Kit/Lz4Command"
+        ),
+        .executableTarget(
+            name: "lz4",
+            dependencies: ["Lz4Command"],
+            path: "Sources/Lz4Kit/lz4"
+        ),
+        .executableTarget(
+            name: "unlz4",
+            dependencies: ["Lz4Command"],
+            path: "Sources/Lz4Kit/unlz4"
+        ),
+        .executableTarget(
+            name: "lz4cat",
+            dependencies: ["Lz4Command"],
+            path: "Sources/Lz4Kit/lz4cat"
+        ),
+        .testTarget(
+            name: "Lz4KitTests",
+            dependencies: ["Lz4Kit"]
+        ),
+        .testTarget(
+            name: "Lz4Tests",
+            dependencies: ["Lz4Command", "Lz4Kit"]
+        ),
+
         // MARK: GitHub umbrella
         .target(
             name: "GitHub",
@@ -468,6 +532,7 @@ let package = Package(
             dependencies: [
                 "GitHub",
                 "ForgeKit",
+                "Lz4Kit",
                 "SwiftGit",
                 "TarKit",
                 "XzKit",
@@ -485,7 +550,7 @@ let package = Package(
             name: "GitHubTests",
             dependencies: [
                 "GitHub", "GhCommand", "ForgeKit",
-                "TarKit", "XzKit", "ZipKit",
+                "Lz4Kit", "TarKit", "XzKit", "ZipKit",
             ],
             resources: [
                 .copy("Fixtures"),

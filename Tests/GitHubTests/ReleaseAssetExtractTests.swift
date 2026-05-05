@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Lz4Kit
 import TarKit
 import XzKit
 import ZipKit
@@ -57,6 +58,42 @@ import ZipKit
         try roundTripTarball(compression: .zstd)
     }
     #endif
+
+    @Test func extractTarLz4EndToEnd() throws {
+        // tar.lz4 is chained on every platform — libarchive's lz4
+        // filter isn't enabled in our build, so the dispatcher
+        // routes through Lz4Kit + TarKit on macOS / iOS / Linux /
+        // Windows uniformly.
+        let work = FileManager.default.temporaryDirectory
+            .appendingPathComponent("release-extract-\(UUID().uuidString)",
+                                    isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        let payloadDir = work.appendingPathComponent("repo-1.2.3", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: payloadDir, withIntermediateDirectories: true)
+        try Data("# README\n".utf8).write(
+            to: payloadDir.appendingPathComponent("README.md"))
+
+        // Build a .tar.lz4 fixture via plain tar + Lz4Kit.
+        let plainTar = work.appendingPathComponent("repo-1.2.3.tar")
+        try TarKit.Archive.create(at: plainTar, paths: [payloadDir])
+        let plainBytes = try Data(contentsOf: plainTar)
+        let lz4Bytes = try Lz4Kit.Lz4.compress(plainBytes)
+        let archive = work.appendingPathComponent("repo-1.2.3.tar.lz4")
+        try lz4Bytes.write(to: archive)
+
+        let dest = work.appendingPathComponent("out", isDirectory: true)
+        try ArchiveFormatDetector.extract(
+            archive: archive, format: .tar, into: dest)
+
+        let readme = dest.appendingPathComponent("repo-1.2.3/README.md")
+        #expect(FileManager.default.fileExists(atPath: readme.path))
+        let contents = try String(contentsOf: readme, encoding: .utf8)
+        #expect(contents == "# README\n")
+    }
 
     @Test func extractTarXzEndToEnd() throws {
         let work = FileManager.default.temporaryDirectory

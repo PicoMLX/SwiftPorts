@@ -27,15 +27,17 @@ jobs:
         with:
           xcode-version: "26.0"
       - name: Install C dependencies (Homebrew)
-        # bzip2 / xz / zstd are needed by Bzip2Kit / XzKit / ZstdKit
-        # and by libarchive's bz2 / xz / zstd filters. macOS bundles
-        # libbz2 / liblzma in the SDK, but their pkg-config .pc files
-        # ship via Homebrew only — and zstd isn't in the SDK at all.
-        # Use `brew list <pkg> || brew install <pkg>` so an already-
-        # installed runner doesn't spam the log with "already
-        # installed" notes.
+        # bzip2 / zstd are needed by Bzip2Kit / ZstdKit and by
+        # libarchive's bz2 / zstd filters. xz is no longer needed on
+        # macOS — XzKit now uses Apple's Compression.framework via
+        # `canImport(Compression)` (works on every Apple platform);
+        # libarchive's `lzma` filter is similarly disabled on Apple
+        # via the swift-archive per-platform-traits fork. brotli /
+        # lzfse / lz4 land under the same Apple-framework strategy
+        # when their kits arrive. `brew list || brew install` keeps
+        # the log quiet on already-installed runners.
         run: |
-          for pkg in bzip2 xz zstd; do
+          for pkg in bzip2 zstd; do
             brew list --versions "$pkg" >/dev/null 2>&1 \
               || brew install "$pkg"
           done
@@ -81,11 +83,13 @@ jobs:
         # libssl/zlib are libgit2's transitive deps; bz2 / lzma / zstd
         # are needed by Bzip2Kit / XzKit / ZstdKit and by libarchive's
         # filters once Bzip2Support / LZMASupport / ZstdSupport traits
-        # are on.
+        # are on. lz4 backs Lz4Kit (libarchive's lz4 filter is not
+        # enabled in our build — Lz4Kit is the path).
         run: |
           apt-get update
           apt-get install -y libssl-dev pkg-config ca-certificates \
-                             zlib1g-dev libbz2-dev liblzma-dev libzstd-dev
+                             zlib1g-dev libbz2-dev liblzma-dev \
+                             libzstd-dev liblz4-dev
       - name: Verify Swift version
         run: swift --version
       - name: Build (Linux)
@@ -130,7 +134,7 @@ jobs:
         # link cleanly.
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib bzip2 liblzma zstd --triplet x64-windows-static-md
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib bzip2 liblzma zstd lz4 --triplet x64-windows-static-md
           $base = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
           # Always print the full inventory first (incl. debug/) so a
           # future naming mismatch is immediately visible in CI logs.
@@ -210,6 +214,7 @@ jobs:
                         Bzip2Kit Bzip2Command \
                         XzKit XzCommand \
                         ZstdKit ZstdCommand \
+                        Lz4Kit Lz4Command \
                         GitHub GhCommand GitLab GlabCommand \
                         SwiftGit GitCommand; do
             echo "::group::swift build --target $target"
