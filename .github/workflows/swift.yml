@@ -31,9 +31,14 @@ jobs:
         # and by libarchive's bz2 / xz / zstd filters. macOS bundles
         # libbz2 / liblzma in the SDK, but their pkg-config .pc files
         # ship via Homebrew only — and zstd isn't in the SDK at all.
-        # Install all three so SwiftPM's pkgConfig resolution finds
-        # them uniformly.
-        run: brew install bzip2 xz zstd
+        # Use `brew list <pkg> || brew install <pkg>` so an already-
+        # installed runner doesn't spam the log with "already
+        # installed" notes.
+        run: |
+          for pkg in bzip2 xz zstd; do
+            brew list --versions "$pkg" >/dev/null 2>&1 \
+              || brew install "$pkg"
+          done
       - name: Verify Swift version
         run: swift --version
       - name: Build (macOS)
@@ -135,9 +140,13 @@ jobs:
           Write-Host "vcpkg .lib inventory under $base (recursive):"
           Get-ChildItem "$base" -Recurse -Filter "*.lib" -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host "  $($_.FullName)" }
-          # Find anything containing 'zlib' or 'libz' so we can adapt
-          # if vcpkg ever renames the artifact.
-          $candidates = @("zlib.lib", "libzlib.lib", "libz.lib", "z.lib")
+          # vcpkg's x64-windows-static-md triplet ships zlib's static
+          # library as `zs.lib` (yes, really — the inventory above
+          # confirmed this). Other vcpkg triplets and historical
+          # releases used `zlib.lib`; cover both. libarchive's
+          # `linkedLibrary("z")` looks up `z.lib`, so we always end
+          # up aliasing the chosen artifact under that name.
+          $candidates = @("zs.lib", "zlib.lib", "libzlib.lib", "libz.lib", "z.lib")
           $zlibLib = $null
           foreach ($name in $candidates) {
             $p = Join-Path "$base\lib" $name

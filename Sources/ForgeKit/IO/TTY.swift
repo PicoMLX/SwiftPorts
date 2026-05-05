@@ -26,6 +26,11 @@ public enum TTY {
     public static var isStdoutTTY: Bool {
 #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
         return false
+#elseif os(Windows)
+        // MSVC deprecated the POSIX-named `isatty` in favour of the
+        // ISO-C-conformant `_isatty`. Same signature, no runtime
+        // difference — silences the deprecation warning.
+        return _isatty(1) != 0
 #else
         return isatty(1) != 0
 #endif
@@ -36,6 +41,8 @@ public enum TTY {
     public static var isStderrTTY: Bool {
 #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
         return false
+#elseif os(Windows)
+        return _isatty(2) != 0
 #else
         return isatty(2) != 0
 #endif

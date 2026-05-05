@@ -35,6 +35,13 @@ import ZipKit
                 == "plain.bin")
     }
 
+    // libarchive's bz2 / xz / zstd filters are gated to platforms
+    // where the system libraries ship (per the swift-archive
+    // per-platform-traits fork) — macOS / Linux / Windows. iOS /
+    // tvOS / watchOS / visionOS / Android do not compile those
+    // filters into CArchive, so write / read of those compressed
+    // tarballs throws `archiveOpenFailed`. Gate the tests.
+    #if os(macOS) || os(Linux) || os(Windows)
     @Test func extractTarBz2EndToEnd() throws {
         try roundTripTarball(compression: .bzip2)
     }
@@ -46,6 +53,7 @@ import ZipKit
     @Test func extractTarZstEndToEnd() throws {
         try roundTripTarball(compression: .zstd)
     }
+    #endif
 
     /// Build a tar.<compression> on disk, run it through the
     /// dispatcher, verify a known file decodes back. Covers the
