@@ -92,15 +92,45 @@ gh version
 - 401 → `APIError.unauthenticated`, 404 → `.notFound`,
   403 + remaining=0 → `.rateLimited(resetAt:)`.
 
+## Embedded tools (no shellout)
+
+Anything `gh` would otherwise spawn is handled in-process by a sibling
+SwiftPorts library. Concretely:
+
+| `gh` feature                                        | What upstream needs           | In-process via                                                                                  |
+|-----------------------------------------------------|-------------------------------|-------------------------------------------------------------------------------------------------|
+| `gh api --jq <filter>`                              | `jq` (embedded as gojq upstream) | [`JqKit`](../Sources/JqKit/)                                                                     |
+| `gh api graphql -f query=...`                       | GraphQL `{query, variables, operationName}` envelope | Built into `ApiCommand` (no external tool)                                                      |
+| `gh run view --log`                                 | reading entries out of a ZIP  | [`ZipKit`](../Sources/ZipKit/) (`ZipExtractor.printConcatenatedTextEntries`)                     |
+| `gh run download`                                   | downloading workflow ZIP artifacts | `URLSession` + `ZipKit` for any in-process unpacking callers want                                |
+| `gh release download --extract` for `.zip`           | `unzip`                       | [`ZipKit`](../Sources/ZipKit/)                                                                  |
+| `gh release download --extract` for `.tar`           | `tar`                         | [`TarKit`](../Sources/TarKit/) (libarchive backend)                                              |
+| `gh release download --extract` for `.tar.gz` / `.tgz` | `tar` + `gzip`             | `TarKit` (libarchive's gzip filter, available on every platform)                                  |
+| `gh release download --extract` for `.tar.bz2`        | `tar` + `bzip2`              | `TarKit` (libarchive's bz2 filter, gated to macOS / Linux / Windows by libbz2 availability)      |
+| `gh release download --extract` for `.tar.xz` / `.txz` | `tar` + `xz`               | `TarKit` directly on Linux / Windows; on Apple-mobile (no libarchive lzma) chained through [`XzKit`](../Sources/XzKit/) (Compression.framework backend) → `TarKit` |
+| `gh release download --extract` for `.tar.zst`        | `tar` + `zstd`               | `TarKit` (libarchive's zstd filter, gated to macOS / Linux / Windows by libzstd availability)    |
+| `gh release download --extract` for `.tar.lz4` / `.tlz4` | `tar` + `lz4`             | Always chained: [`Lz4Kit`](../Sources/Lz4Kit/) (Compression.framework on Apple, liblz4 on Linux / Windows) → `TarKit`. Libarchive's lz4 filter isn't compiled in, so this is the only path. |
+
+The reason this matters: an iOS / sandboxed-macOS / server-side Swift
+app embedding `GhCommand` can run **all** of the above without
+spawning anything external. The same flag set, the same output, the
+same exit codes — just no `Process`.
+
 ## Local git integration
 
 `gh repo clone`, `gh pr checkout`, `gh pr create`, `gh issue develop`,
-and `gh repo fork` shell out to the user's `git` binary via
-`ForgeKit.ProcessGitClient`. That preserves their actual ssh-agent,
-credential helper, commit-signing config, and hooks. Embedders that
-can't run `Process` (sandboxed iOS / server contexts) can inject
-`ForgeKit.NoGitClient` — git-aware commands fail fast with a clear
-"this command needs git" message instead of crashing.
+and `gh repo fork` go through `ForgeKit.GitClient`. By default
+that's `ForgeKit.ProcessGitClient`, which shells out to the user's
+`git` binary so their ssh-agent, credential helper, commit-signing
+config, and hooks all keep working. Embedders that can't run `Process`
+have two alternatives:
+
+- Inject `ForgeKit.NoGitClient` — git-aware commands fail fast with a
+  clear "this command needs git" message instead of crashing.
+- Inject [`SwiftGit`](../Sources/SwiftGit/)'s `LibGit2GitClient` — a
+  libgit2 1.9.x-backed in-process implementation that provides the
+  same `GitClient` API. With this wired up, `gh repo clone` /
+  `gh pr checkout` / `gh repo fork` run entirely in-process too.
 
 ## Adopts
 
@@ -111,7 +141,7 @@ can't run `Process` (sandboxed iOS / server contexts) can inject
 - [`swift-crypto`](https://github.com/apple/swift-crypto)
 - [`Yams`](https://github.com/jpsim/Yams) for hosts.yml read/write
 - Apple's `Security` framework for Keychain access
-- `ZipKit` (sibling port) for `gh run view --log` and `gh run download`
+- Sibling SwiftPorts ports — see the embedded-tools table above.
 
 ## Skipped / out of scope
 
