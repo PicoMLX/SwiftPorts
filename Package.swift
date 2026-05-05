@@ -26,6 +26,11 @@ let package = Package(
         .watchOS(.v11),
     ],
     products: [
+        // Sandbox — TaskLocal-driven path & URL gating for embedding.
+        // Zero dependencies beyond Foundation. Every library that
+        // touches URLs / env / argv depends on this.
+        .library(name: "Sandbox", targets: ["Sandbox"]),
+
         // ForgeKit — host-agnostic CLI plumbing (IO, Git, Secrets).
         .library(name: "ForgeKit", targets: ["ForgeKit"]),
 
@@ -147,9 +152,21 @@ let package = Package(
                  branch: "windows-android-platforms"),
     ],
     targets: [
+        // MARK: Sandbox (TaskLocal URL/env/argv gating)
+        .target(
+            name: "Sandbox",
+            path: "Sources/Sandbox",
+            exclude: ["AUDIT.md"]
+        ),
+        .testTarget(
+            name: "SandboxTests",
+            dependencies: ["Sandbox"]
+        ),
+
         // MARK: ForgeKit (host-agnostic plumbing)
         .target(
             name: "ForgeKit",
+            dependencies: ["Sandbox"],
             path: "Sources/ForgeKit"
         ),
 
