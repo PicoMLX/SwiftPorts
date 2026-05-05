@@ -11,7 +11,7 @@ public struct UnzipCommand: AsyncParsableCommand {
         abstract: "Extract files from a PKZIP archive."
     )
 
-    @Argument(help: "Archive (.zip).")
+    @Argument(help: "Archive (.zip). Use '-' to read from stdin.")
     public var archive: String
 
     @Argument(parsing: .remaining,
@@ -66,31 +66,62 @@ public struct UnzipCommand: AsyncParsableCommand {
     public init() {}
 
     public func run() async throws {
-        let archiveURL = URL(fileURLWithPath: archive)
         let includes = patterns
         let excludes = excludePatterns
 
+        // `unzip -` reads the archive bytes from stdin and routes
+        // through ZipKit's Data-based entry points.
+        if archive == "-" {
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            if list {
+                try doList(source: .data(data), includes: includes, excludes: excludes)
+                return
+            }
+            if test {
+                try doTest(source: .data(data))
+                return
+            }
+            if pipe {
+                try doPipe(source: .data(data), includes: includes, excludes: excludes)
+                return
+            }
+            try doExtract(source: .data(data), includes: includes, excludes: excludes)
+            return
+        }
+
+        let archiveURL = URL(fileURLWithPath: archive)
         if list {
-            try doList(url: archiveURL, includes: includes, excludes: excludes)
+            try doList(source: .url(archiveURL), includes: includes, excludes: excludes)
             return
         }
         if test {
-            try doTest(url: archiveURL)
+            try doTest(source: .url(archiveURL))
             return
         }
         if pipe {
-            try doPipe(url: archiveURL, includes: includes, excludes: excludes)
+            try doPipe(source: .url(archiveURL), includes: includes, excludes: excludes)
             return
         }
-        try doExtract(url: archiveURL, includes: includes, excludes: excludes)
+        try doExtract(source: .url(archiveURL), includes: includes, excludes: excludes)
+    }
+
+    /// Whether the archive came from a path on disk or a stdin slurp.
+    /// Used so each operation can pick the right ZipKit overload.
+    private enum Source {
+        case url(URL)
+        case data(Data)
     }
 
     // MARK: Modes
 
     private func doList(
-        url: URL, includes: [String], excludes: [String]
+        source: Source, includes: [String], excludes: [String]
     ) throws {
-        let entries = try Archive.list(at: url)
+        let entries: [Entry]
+        switch source {
+        case .url(let url):  entries = try Archive.list(at: url)
+        case .data(let d):   entries = try Archive.list(data: d)
+        }
         let filtered = entries.filter { entry in
             include(path: entry.path, includes: includes, excludes: excludes)
         }
@@ -123,32 +154,50 @@ public struct UnzipCommand: AsyncParsableCommand {
                      filtered.count == 1 ? "" : "s"))
     }
 
-    private func doTest(url: URL) throws {
-        let entries = try Archive.test(at: url)
+    private func doTest(source: Source) throws {
+        let entries: [Entry]
+        let label: String
+        switch source {
+        case .url(let url):
+            entries = try Archive.test(at: url)
+            label = url.lastPathComponent
+        case .data(let d):
+            entries = try Archive.test(data: d)
+            label = "<stdin>"
+        }
         if !quiet {
             for e in entries where e.kind == .file {
                 print("    testing: \(e.path)\t OK")
             }
-            print("No errors detected in compressed data of \(url.lastPathComponent).")
+            print("No errors detected in compressed data of \(label).")
         }
     }
 
     private func doPipe(
-        url: URL, includes: [String], excludes: [String]
+        source: Source, includes: [String], excludes: [String]
     ) throws {
-        let entries = try Archive.list(at: url)
-        let selected = entries.filter { e in
-            e.kind == .file &&
-            include(path: e.path, includes: includes, excludes: excludes)
-        }
-        for e in selected {
-            let data = try Archive.read(entry: e.path, from: url)
-            FileHandle.standardOutput.write(data)
+        switch source {
+        case .url(let url):
+            let entries = try Archive.list(at: url)
+            for e in entries where e.kind == .file
+                && include(path: e.path, includes: includes, excludes: excludes)
+            {
+                let data = try Archive.read(entry: e.path, from: url)
+                FileHandle.standardOutput.write(data)
+            }
+        case .data(let d):
+            let entries = try Archive.list(data: d)
+            for e in entries where e.kind == .file
+                && include(path: e.path, includes: includes, excludes: excludes)
+            {
+                let bytes = try Archive.read(entry: e.path, data: d)
+                FileHandle.standardOutput.write(bytes)
+            }
         }
     }
 
     private func doExtract(
-        url: URL, includes: [String], excludes: [String]
+        source: Source, includes: [String], excludes: [String]
     ) throws {
         if overwrite && neverOverwrite {
             throw ValidationError("Specify -o (overwrite) OR -n (never), not both.")
@@ -167,9 +216,18 @@ public struct UnzipCommand: AsyncParsableCommand {
             excludes: excludes,
             caseInsensitive: caseInsensitive,
             quiet: quiet)
-        let written = try Archive.extract(from: url, options: options)
+        let written: [Entry]
+        let label: String
+        switch source {
+        case .url(let url):
+            written = try Archive.extract(from: url, options: options)
+            label = url.lastPathComponent
+        case .data(let d):
+            written = try Archive.extract(from: d, options: options)
+            label = "<stdin>"
+        }
         if !quiet {
-            print("Archive:  \(url.lastPathComponent)")
+            print("Archive:  \(label)")
             for e in written {
                 let action = e.kind == .directory ? "  creating: " :
                              (e.compressionMethod == .store ? " extracting: " :

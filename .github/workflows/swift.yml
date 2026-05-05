@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'eval/**'
   pull_request:
     branches:
       - main
@@ -76,11 +77,10 @@ jobs:
   build-windows:
     # Full Windows build. The libgit2 fork
     # (`odrobnik/libgit2#windows-android-platforms`) wires up
-    # WinHTTP / SSPI / BCrypt; the ZIPFoundation fork
-    # (`odrobnik/ZIPFoundation#fix/android-windows-imports`) ships
-    # POSIX-compat shims (`PosixCompat+Windows.swift`) for the
-    # mode_t / S_IF* / fseeko / timegm bits MSVC doesn't expose. The
-    # whole tree (`zip`, `unzip`, `gh`, `glab`, `git`) compiles here.
+    # WinHTTP / SSPI / BCrypt; libarchive (via marcprux/swift-archive)
+    # ships archive_windows.{h,c} POSIX-compat shims so the C sources
+    # build cleanly. The whole tree (`zip`, `unzip`, `gh`, `glab`,
+    # `git`) compiles here.
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -95,11 +95,11 @@ jobs:
         # vcpkg is preinstalled on windows-latest at C:\vcpkg.
         # x64-windows-static-md gives us a `zlib.lib` linked against
         # the dynamic UCRT, which matches Swift's default link mode.
-        # Persist the resolved zlib.lib path for the build / test
-        # steps — vcpkg's exact output filename varies between runs
-        # (sometimes `zlib.lib`, occasionally hidden under a sibling
-        # debug/ subfolder), and SwiftPM's lld-link won't search by
-        # bare name reliably.
+        #
+        # libarchive's `linkedLibrary("z")` expands to `z.lib` on
+        # Windows (lld-link convention), but vcpkg names the artifact
+        # `zlib.lib`. Drop an alias copy named `z.lib` next to it so
+        # `-lz` resolves cleanly via /LIBPATH below.
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib --triplet x64-windows-static-md
@@ -110,25 +110,20 @@ jobs:
             Get-ChildItem -Recurse "$base" | Select-Object FullName
             exit 1
           }
-          "ZLIB_LIB=$zlib"   | Out-File -FilePath $env:GITHUB_ENV -Append
+          Copy-Item -Force $zlib "$base\lib\z.lib"
           "ZLIB_BASE=$base"  | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build (Windows)
         shell: pwsh
         run: |
-          # ZIPFoundation pulls in zlib via the CZLib systemLibrary; the
-          # fork's per-platform `linkerSettings` doesn't reliably
-          # propagate `.linkedLibrary("zlib")` to the final executable
-          # link, so inject the absolute zlib.lib path resolved in the
-          # vcpkg step.
           swift build --build-tests -v `
             -Xcc "-I$env:ZLIB_BASE\include" `
-            -Xlinker "$env:ZLIB_LIB"
+            -Xlinker "/LIBPATH:$env:ZLIB_BASE\lib"
       - name: Test (Windows)
         shell: pwsh
         run: |
           swift test -v --skip-build --no-parallel `
             -Xcc "-I$env:ZLIB_BASE\include" `
-            -Xlinker "$env:ZLIB_LIB"
+            -Xlinker "/LIBPATH:$env:ZLIB_BASE\lib"
 
   # Uses skiptools/swift-android-action to install the swift.org Android
   # SDK + NDK + emulator stack. We then invoke `swift build` ourselves
@@ -162,6 +157,8 @@ jobs:
       - name: Build each library target (Android)
         run: |
           for target in ForgeKit ZipKit ZipCommand UnzipCommand \
+                        TarKit TarCommand \
+                        GzipKit GzipCommand \
                         GitHub GhCommand GitLab GlabCommand \
                         SwiftGit GitCommand; do
             echo "::group::swift build --target $target"

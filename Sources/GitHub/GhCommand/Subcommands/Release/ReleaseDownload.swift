@@ -4,6 +4,8 @@ import Foundation
 import FoundationNetworking  // URLSession lives in a separate module on Linux
 #endif
 import GitHub
+import TarKit
+import ZipKit
 
 struct ReleaseDownload: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -14,6 +16,12 @@ struct ReleaseDownload: AsyncParsableCommand {
 
         Without --pattern, all assets are downloaded.
         Use --tag to pick a specific tag (default: latest).
+
+        With --extract, recognized archive assets (.zip, .tar, .tar.gz,
+        .tgz) are unpacked into a sibling directory named after the
+        asset (with the archive suffix stripped). The original archive
+        file is kept; pass --extract --no-keep-archive to remove it
+        after a successful extract.
         """
     )
 
@@ -32,6 +40,14 @@ struct ReleaseDownload: AsyncParsableCommand {
     @Option(name: [.short, .customLong("dir")],
             help: "Destination directory.")
     var directory: String = "."
+
+    @Flag(name: .long,
+          help: "Unpack recognized archive assets after download.")
+    var extract: Bool = false
+
+    @Flag(name: .customLong("no-keep-archive"),
+          help: "After --extract, remove the original archive file.")
+    var noKeepArchive: Bool = false
 
     func run() async throws {
         let target = try await RepositoryResolver.resolve(flag: repo)
@@ -62,6 +78,20 @@ struct ReleaseDownload: AsyncParsableCommand {
             print("→ \(asset.name) (\(ByteCountFormatter.string(fromByteCount: asset.size, countStyle: .file)))")
             let (data, _) = try await session.data(from: asset.browserDownloadUrl)
             try data.write(to: dest)
+
+            if extract, let format = ArchiveFormatDetector.detect(name: asset.name) {
+                let extractDir = destDir.appendingPathComponent(
+                    ArchiveFormatDetector.strippedBaseName(asset.name),
+                    isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: extractDir, withIntermediateDirectories: true)
+                try ArchiveFormatDetector.extract(
+                    archive: dest, format: format, into: extractDir)
+                print("  ↳ extracted into \(extractDir.lastPathComponent)/")
+                if noKeepArchive {
+                    try? FileManager.default.removeItem(at: dest)
+                }
+            }
         }
     }
 
@@ -86,5 +116,55 @@ struct ReleaseDownload: AsyncParsableCommand {
             return result
         }
         return match(0, 0)
+    }
+}
+
+/// Routes archive assets to the appropriate extractor based on
+/// filename suffix. Lives next to the download command because that's
+/// the only caller today; promote to GitHub/Lib/IO/ if a second
+/// caller appears.
+enum ArchiveFormatDetector {
+    enum Format {
+        case zip
+        case tar           // any libarchive-readable tar (.tar, .tar.gz, .tgz, …)
+    }
+
+    static func detect(name: String) -> Format? {
+        let lower = name.lowercased()
+        if lower.hasSuffix(".zip") { return .zip }
+        if lower.hasSuffix(".tar")
+            || lower.hasSuffix(".tar.gz")
+            || lower.hasSuffix(".tgz")
+            || lower.hasSuffix(".tar.bz2")
+            || lower.hasSuffix(".tar.xz")
+            || lower.hasSuffix(".tar.zst") {
+            return .tar
+        }
+        return nil
+    }
+
+    /// Returns the archive's "natural" extracted directory name —
+    /// `foo-1.2.3.tar.gz` → `foo-1.2.3`, `foo.zip` → `foo`.
+    static func strippedBaseName(_ name: String) -> String {
+        let suffixes = [".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
+                        ".tgz", ".tar", ".zip"]
+        let lower = name.lowercased()
+        for suffix in suffixes where lower.hasSuffix(suffix) {
+            return String(name.dropLast(suffix.count))
+        }
+        return name
+    }
+
+    static func extract(archive: URL, format: Format, into dest: URL) throws {
+        switch format {
+        case .zip:
+            try ZipKit.Archive.extract(
+                from: archive,
+                options: ZipKit.ExtractOptions(destination: dest))
+        case .tar:
+            try TarKit.Archive.extract(
+                from: archive,
+                options: TarKit.ExtractOptions(destination: dest))
+        }
     }
 }
