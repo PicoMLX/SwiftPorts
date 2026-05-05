@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 import SwiftGit
 
 struct RevParse: AsyncParsableCommand {
@@ -90,7 +91,7 @@ struct RevParse: AsyncParsableCommand {
         let trimmed = path.hasSuffix("/") && path.count > 1
             ? String(path.dropLast())
             : path
-        let cwd = FileManager.default.currentDirectoryPath
+        let cwd = Sandbox.currentDirectory.path
         if trimmed == "\(cwd)/.git" { return ".git" }
         return trimmed
     }

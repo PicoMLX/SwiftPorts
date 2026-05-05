@@ -1,4 +1,5 @@
 import Foundation
+import Sandbox
 import libgit2
 
 extension GitClient {
@@ -20,6 +21,7 @@ extension GitClient {
         initialBranch: String? = nil,
         reinit: Bool = false
     ) async throws -> URL {
+        try await Sandbox.authorize(workingDirectory)
         Libgit2.ensureInitialized()
         try FileManager.default.createDirectory(
             at: workingDirectory, withIntermediateDirectories: true)

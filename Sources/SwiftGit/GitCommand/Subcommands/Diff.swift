@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 import SwiftGit
 
 struct Diff: AsyncParsableCommand {
@@ -214,8 +215,8 @@ struct Diff: AsyncParsableCommand {
         if token.contains("/") || token.contains("*") || token.contains("?") {
             return true
         }
-        let cwd = FileManager.default.currentDirectoryPath
-        let resolved = (cwd as NSString).appendingPathComponent(token)
+        let resolved = Sandbox.currentDirectory
+            .appendingPathComponent(token).path
         return FileManager.default.fileExists(atPath: resolved)
     }
 

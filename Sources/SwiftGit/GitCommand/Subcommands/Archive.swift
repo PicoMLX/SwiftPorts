@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 import SwiftGit
 
 /// `git archive` — produce a tar / tar.gz / tar.bz2 / tar.xz / tar.zst /
@@ -38,10 +39,9 @@ struct Archive: AsyncParsableCommand {
 
     func run() async throws {
         let resolvedFormat = try resolveFormat()
-        let outputURL = URL(fileURLWithPath: output)
+        let outputURL = Sandbox.resolve(output)
         let client = SwiftGit.GitClient(
-            workingDirectory: URL(fileURLWithPath:
-                FileManager.default.currentDirectoryPath))
+            workingDirectory: Sandbox.currentDirectory)
         try await client.archiveTree(
             treeish: treeish,
             format: resolvedFormat,

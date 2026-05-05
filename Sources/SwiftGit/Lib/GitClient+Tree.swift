@@ -29,7 +29,7 @@ extension GitClient {
         treeish: String = "HEAD",
         recursive: Bool = false
     ) async throws -> [TreeEntry] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var obj: OpaquePointer?
             try check(treeish.withCString { name in
                 git_revparse_single(&obj, repo, name)

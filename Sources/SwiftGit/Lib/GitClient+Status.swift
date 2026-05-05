@@ -83,7 +83,7 @@ extension GitClient {
     /// Produce a `git status` snapshot for the working tree. Includes
     /// untracked files; ignored files are skipped (real git's default).
     public func status() async throws -> StatusReport {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Build options: include untracked + recurse into untracked dirs,
             // but skip ignored entries.
             var opts = git_status_options()

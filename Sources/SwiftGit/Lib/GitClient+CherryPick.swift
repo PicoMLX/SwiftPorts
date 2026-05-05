@@ -30,7 +30,7 @@ extension GitClient {
         _ ref: String,
         author: GitSignature? = nil
     ) async throws -> CherryPickOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve the ref to a commit.
             var commitObj: OpaquePointer?
             try check(git_revparse_single(&commitObj, repo, ref))
@@ -80,7 +80,7 @@ extension GitClient {
     public func cherryPickContinue(
         author: GitSignature? = nil
     ) async throws -> CherryPickOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             // CHERRY_PICK_HEAD points at the commit we were applying.
             var head: OpaquePointer?
             let rc = git_reference_lookup(&head, repo, "CHERRY_PICK_HEAD")
@@ -118,7 +118,7 @@ extension GitClient {
     /// `git cherry-pick --abort`: undo the in-progress cherry-pick
     /// (`git_repository_state_cleanup` + `git_reset --hard HEAD`).
     public func cherryPickAbort() async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Sanity: there has to actually be a cherry-pick in flight.
             var head: OpaquePointer?
             let rc = git_reference_lookup(&head, repo, "CHERRY_PICK_HEAD")

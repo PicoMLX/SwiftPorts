@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 import SwiftGit
 
 struct Apply: AsyncParsableCommand {
@@ -22,7 +23,8 @@ struct Apply: AsyncParsableCommand {
     func run() async throws {
         let data: Data
         if let patchFile, patchFile != "-" {
-            let url = URL(fileURLWithPath: patchFile)
+            let url = Sandbox.resolve(patchFile)
+            try await Sandbox.authorize(url)
             data = try Data(contentsOf: url)
         } else {
             data = FileHandle.standardInput.availableData

@@ -58,8 +58,8 @@ struct GitClientInspectionTests {
         try Data("ok\n".utf8).write(to: dir.appendingPathComponent("b.txt"))
 
         let client = GitClient(workingDirectory: dir)
-        #expect(try client.isIgnored("a.log") == true)
-        #expect(try client.isIgnored("b.txt") == false)
+        #expect(try await client.isIgnored("a.log") == true)
+        #expect(try await client.isIgnored("b.txt") == false)
     }
 
     @Test("localBranches lists branches in alphabetical order")
@@ -73,7 +73,7 @@ struct GitClientInspectionTests {
         try runGit(["branch", "alpha"], in: dir)
 
         let client = GitClient(workingDirectory: dir)
-        let names = try client.localBranches().sorted()
+        let names = try await client.localBranches().sorted()
         #expect(names == ["alpha", "feature", "main"])
     }
 

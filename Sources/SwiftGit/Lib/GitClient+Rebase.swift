@@ -32,7 +32,7 @@ extension GitClient {
         author: GitSignature? = nil,
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> RebaseOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve the three annotated commits libgit2 needs: branch
             // (the work being moved — current HEAD), upstream (its
             // current base), onto (where we'll land — defaults to upstream).
@@ -95,7 +95,7 @@ extension GitClient {
         author: GitSignature? = nil,
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> RebaseOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             var rebase: OpaquePointer?
             var opts = git_rebase_options()
             try check(git_rebase_options_init(
@@ -146,7 +146,7 @@ extension GitClient {
         author: GitSignature? = nil,
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> RebaseOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             var rebase: OpaquePointer?
             var opts = git_rebase_options()
             try check(git_rebase_options_init(
@@ -182,7 +182,7 @@ extension GitClient {
     /// the state captured before `rebase` started. Throws when there's
     /// no rebase to abort.
     public func rebaseAbort() async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var rebase: OpaquePointer?
             var opts = git_rebase_options()
             try check(git_rebase_options_init(

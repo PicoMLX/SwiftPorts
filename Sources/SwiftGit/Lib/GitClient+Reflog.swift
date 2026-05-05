@@ -22,7 +22,7 @@ extension GitClient {
     /// Read the reflog for `refName` (default `HEAD`). Newest entries
     /// come first — matches `git reflog`.
     public func reflog(refName: String = "HEAD") async throws -> [ReflogEntry] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var log: OpaquePointer?
             try check(refName.withCString { name in
                 git_reflog_read(&log, repo, name)

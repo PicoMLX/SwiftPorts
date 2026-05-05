@@ -9,7 +9,7 @@ extension GitClient {
     /// `force == true` skips the "uncommitted changes" safety check.
     public func remove(paths: [String], keepWorktree: Bool = false, force: Bool = false) async throws {
         guard !paths.isEmpty else { return }
-        try withRepository { repo in
+        try await withRepository { repo in
             var index: OpaquePointer?
             try check(git_repository_index(&index, repo))
             defer { git_index_free(index) }
@@ -36,7 +36,7 @@ extension GitClient {
     /// Move / rename `source` to `destination`. Stages the move in
     /// the index and on disk. Equivalent to `git mv`.
     public func move(from source: String, to destination: String) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve absolute paths in the workdir.
             let cwd = workingDirectory
             let srcURL = cwd.appendingPathComponent(source)

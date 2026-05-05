@@ -666,6 +666,7 @@ let package = Package(
             name: "SwiftGit",
             dependencies: [
                 "ForgeKit",
+                "Sandbox",
                 .product(name: "libgit2", package: "libgit2"),
                 // For `git archive` — libarchive's writer is the
                 // backend so the operation runs in-process and works
@@ -679,6 +680,7 @@ let package = Package(
             dependencies: [
                 "SwiftGit",
                 "ForgeKit",
+                "Sandbox",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "libgit2", package: "libgit2"),
             ],

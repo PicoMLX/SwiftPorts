@@ -1,4 +1,5 @@
 import Foundation
+import Sandbox
 import libgit2
 
 // Selective imports — the libarchive wrapper module is named `Archive`
@@ -41,7 +42,8 @@ extension GitClient {
         to output: URL,
         prefix: String? = nil
     ) async throws {
-        let walk = try collectBlobEntries(
+        try await Sandbox.authorize(output)
+        let walk = try await collectBlobEntries(
             treeish: treeish, prefix: normalizedPrefix(prefix))
         try writeArchive(
             entries: walk.entries,
@@ -70,8 +72,8 @@ extension GitClient {
 
     private func collectBlobEntries(
         treeish: String, prefix: String
-    ) throws -> WalkResult {
-        try withRepository { repo in
+    ) async throws -> WalkResult {
+        try await withRepository { repo in
             var obj: OpaquePointer?
             try check(treeish.withCString { name in
                 git_revparse_single(&obj, repo, name)

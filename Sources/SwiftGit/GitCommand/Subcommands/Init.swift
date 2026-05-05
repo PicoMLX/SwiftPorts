@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 import SwiftGit
 
 struct GitInit: AsyncParsableCommand {
@@ -21,7 +22,7 @@ struct GitInit: AsyncParsableCommand {
     func run() async throws {
         let target: URL
         if let directory {
-            target = URL(fileURLWithPath: directory)
+            target = Sandbox.resolve(directory)
         } else {
             target = CommandContext.currentDirectory
         }

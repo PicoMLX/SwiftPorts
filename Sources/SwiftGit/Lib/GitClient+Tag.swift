@@ -23,7 +23,7 @@ extension GitClient {
     /// `v1*`); pass `nil` for all tags. Names sort alphabetically to
     /// match `git tag`'s default order.
     public func tagList(pattern: String? = nil) async throws -> [String] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var arr = git_strarray()
             if let pattern {
                 try check(pattern.withCString { p in
@@ -48,7 +48,7 @@ extension GitClient {
     /// tag so the CLI can format `git tag -n` style annotations.
     public func tagDetails(pattern: String? = nil) async throws -> [TagEntry] {
         let names = try await tagList(pattern: pattern)
-        return try withRepository { repo in
+        return try await withRepository { repo in
             var entries: [TagEntry] = []
             entries.reserveCapacity(names.count)
             for name in names {
@@ -66,7 +66,7 @@ extension GitClient {
     public func tagCreate(
         name: String, target: String = "HEAD", force: Bool = false
     ) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             var obj: OpaquePointer?
             try check(git_revparse_single(&obj, repo, target))
             defer { git_object_free(obj) }
@@ -86,7 +86,7 @@ extension GitClient {
         message: String, tagger: GitSignature? = nil,
         force: Bool = false
     ) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             var obj: OpaquePointer?
             try check(git_revparse_single(&obj, repo, target))
             defer { git_object_free(obj) }
@@ -110,7 +110,7 @@ extension GitClient {
     /// for the `Deleted tag '<name>' (was <sha7>)` summary line.
     @discardableResult
     public func tagDelete(name: String) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Fetch the target SHA before deletion for the summary.
             let entry = try lookupTagEntry(repo: repo, name: name)
             try check(name.withCString { n in
@@ -123,7 +123,7 @@ extension GitClient {
     /// True when a tag with `name` already exists. Used by the CLI to
     /// emit real-git's `tag '<name>' already exists` error wording.
     public func tagExists(_ name: String) async throws -> Bool {
-        try withRepository { repo in
+        try await withRepository { repo in
             var ref: OpaquePointer?
             let rc = git_reference_lookup(&ref, repo, "refs/tags/\(name)")
             if rc == 0 { git_reference_free(ref); return true }

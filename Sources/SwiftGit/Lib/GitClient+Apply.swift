@@ -24,7 +24,7 @@ extension GitClient {
     /// `git apply` (with `--cached` / `--index` controlled by
     /// `location`).
     public func apply(patch patchData: Data, location: ApplyLocation = .workdir) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Parse the patch text into a git_diff.
             var diff: OpaquePointer?
             try patchData.withUnsafeBytes { raw in

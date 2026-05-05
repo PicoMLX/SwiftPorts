@@ -1,5 +1,6 @@
 import Foundation
 import ForgeKit
+import Sandbox
 import libgit2
 
 /// In-process libgit2-backed implementation of
@@ -22,7 +23,7 @@ public struct GitClient: ForgeKit.GitClient {
     public let credentials: CredentialProvider?
 
     public init(
-        workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+        workingDirectory: URL = Sandbox.currentDirectory,
         credentials: CredentialProvider? = nil
     ) {
         Libgit2.ensureInitialized()
@@ -33,7 +34,7 @@ public struct GitClient: ForgeKit.GitClient {
     // MARK: Read
 
     public func remoteURL(named name: String) async throws -> URL? {
-        try withRepository { repo in
+        try await withRepository { repo in
             var remote: OpaquePointer?
             let rc = git_remote_lookup(&remote, repo, name)
             if rc == GIT_ENOTFOUND.rawValue { return nil }
@@ -47,7 +48,7 @@ public struct GitClient: ForgeKit.GitClient {
     }
 
     public func currentBranch() async throws -> String? {
-        try withRepository { repo in
+        try await withRepository { repo in
             var head: OpaquePointer?
             let rc = git_repository_head(&head, repo)
             // Unborn (no commits yet) or detached HEAD → no current branch.
@@ -65,7 +66,7 @@ public struct GitClient: ForgeKit.GitClient {
     }
 
     public func upstreamBranch(of localBranch: String) async throws -> String? {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve the local branch shorthand into its full refname.
             var branch: OpaquePointer?
             let lookupRC = git_branch_lookup(&branch, repo, localBranch, GIT_BRANCH_LOCAL)
@@ -94,8 +95,16 @@ public struct GitClient: ForgeKit.GitClient {
     // MARK: Write
 
     public func clone(url: URL, directory: URL?) async throws {
+        // Gate the clone source URL (file or network) and the
+        // destination directory before handing them to libgit2.
+        // libgit2's internal HTTP/SSH and packfile FS ops are below
+        // this Swift boundary and are not gated by v1 — see #15
+        // open-question § 5.6.
+        try await Sandbox.authorize(url)
+        let destURL = directory ?? defaultCloneDirectory(for: url)
+        try await Sandbox.authorize(destURL)
         Libgit2.ensureInitialized()
-        let dest = directory?.path ?? defaultCloneDirectory(for: url).path
+        let dest = destURL.path
 
         var opts = git_clone_options()
         try check(git_clone_options_init(&opts, UInt32(GIT_CLONE_OPTIONS_VERSION)))
@@ -126,7 +135,7 @@ public struct GitClient: ForgeKit.GitClient {
     }
 
     public func fetch(remote: String, refspec: String) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var remoteHandle: OpaquePointer?
             try check(git_remote_lookup(&remoteHandle, repo, remote))
             defer { git_remote_free(remoteHandle) }
@@ -166,7 +175,7 @@ public struct GitClient: ForgeKit.GitClient {
     }
 
     public func checkout(ref: String) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var object: OpaquePointer?
             try check(git_revparse_single(&object, repo, ref))
             defer { git_object_free(object) }
@@ -196,7 +205,7 @@ public struct GitClient: ForgeKit.GitClient {
     }
 
     public func push(remote: String, refspec: String, setUpstream: Bool) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var remoteHandle: OpaquePointer?
             try check(git_remote_lookup(&remoteHandle, repo, remote))
             defer { git_remote_free(remoteHandle) }
@@ -241,7 +250,7 @@ public struct GitClient: ForgeKit.GitClient {
     }
 
     public func addRemote(name: String, url: URL) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var remote: OpaquePointer?
             try check(git_remote_create(&remote, repo, name, url.absoluteString))
             git_remote_free(remote)
@@ -249,7 +258,7 @@ public struct GitClient: ForgeKit.GitClient {
     }
 
     public func add(paths: [String]) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var index: OpaquePointer?
             try check(git_repository_index(&index, repo))
             defer { git_index_free(index) }
@@ -282,7 +291,7 @@ public struct GitClient: ForgeKit.GitClient {
         author: GitSignature?,
         allowEmpty: Bool
     ) async throws -> Libgit2CommitDetails {
-        try withRepository { repo in
+        try await withRepository { repo in
             // 1. Stage all working-tree changes (mirrors `git add -A`).
             var index: OpaquePointer?
             try check(git_repository_index(&index, repo))
@@ -425,7 +434,8 @@ public struct GitClient: ForgeKit.GitClient {
 
     // MARK: Internals
 
-    internal func withRepository<T>(_ body: (OpaquePointer?) throws -> T) throws -> T {
+    internal func withRepository<T>(_ body: (OpaquePointer?) throws -> T) async throws -> T {
+        try await Sandbox.authorize(workingDirectory)
         Libgit2.ensureInitialized()
         var repo: OpaquePointer?
         try check(git_repository_open_ext(&repo, workingDirectory.path, 0, nil))
