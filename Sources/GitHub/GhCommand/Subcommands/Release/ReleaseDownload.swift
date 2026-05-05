@@ -186,6 +186,11 @@ enum ArchiveFormatDetector {
             // and the memory peak would otherwise hold the
             // compressed + decompressed bytes simultaneously.
             let lower = archive.lastPathComponent.lowercased()
+            // Lz4Kit is gated off Android (no NDK liblz4, no
+            // Compression.framework). Other platforms always have
+            // it because libarchive itself doesn't compile in lz4
+            // either, so the chain is the only path.
+            #if canImport(Compression) || os(Linux) || os(Windows)
             if lower.hasSuffix(".tar.lz4") || lower.hasSuffix(".tlz4") {
                 let stagingTar = makeStagingTarURL()
                 _ = try Lz4Kit.Lz4.decompressFile(
@@ -197,6 +202,7 @@ enum ArchiveFormatDetector {
                     options: TarKit.ExtractOptions(destination: dest))
                 return
             }
+            #endif
             #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
             if lower.hasSuffix(".tar.xz") || lower.hasSuffix(".txz") {
                 let stagingTar = makeStagingTarURL()
