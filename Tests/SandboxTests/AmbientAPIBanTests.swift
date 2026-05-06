@@ -86,7 +86,13 @@ import Testing
             } catch {
                 continue
             }
-            let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
+            // `components(separatedBy: .newlines)` handles LF, CR, and
+            // CRLF uniformly. `String.split(separator: "\n")` would
+            // miss CRLF because Swift treats `\r\n` as a single
+            // grapheme cluster — on Windows where git checks files
+            // out with CRLF, the entire file would come back as one
+            // "line" and the comment-skip logic below would mis-fire.
+            let lines = body.components(separatedBy: .newlines)
             for (idx, line) in lines.enumerated() {
                 // Skip comment-only lines (// or /// or *) — needles in
                 // explanatory comments are fine.
