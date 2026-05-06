@@ -15,18 +15,27 @@ import libgit2
 /// `git_repository*` handle, the actor releases — subsequent libgit2
 /// calls on that repo read its frozen config, not the option block.
 ///
-/// **Mappings applied** when `Sandbox.environment()` contains the
-/// listed key:
+/// **Mappings applied** when a `Sandbox` is active. `HOME` and
+/// `XDG_CONFIG_HOME` are *always* applied — the env value takes
+/// precedence when supplied, otherwise we fall back to
+/// sandbox-derived paths so isolation is the default for
+/// `Sandbox.rooted(at:)` (whose default `environment()` doesn't
+/// include `HOME`).
 ///
-/// | Env key | Applied as |
+/// | Source | Applied as |
 /// |---|---|
-/// | `HOME` | `SET_SEARCH_PATH(GLOBAL, $HOME)` + `SET_HOMEDIR($HOME)` |
-/// | `XDG_CONFIG_HOME` | `SET_SEARCH_PATH(XDG, $XDG_CONFIG_HOME)` |
-/// | `GIT_CONFIG_NOSYSTEM=1` | `SET_SEARCH_PATH(SYSTEM, "")` |
-/// | `GIT_SSL_CAINFO` / `GIT_SSL_CAPATH` | `SET_SSL_CERT_LOCATIONS(file, path)` |
+/// | `env["HOME"]`, else `sandbox.homeDirectory` | `SET_SEARCH_PATH(GLOBAL, …)` + `SET_HOMEDIR(…)` |
+/// | `env["XDG_CONFIG_HOME"]`, else `<sandbox.homeDirectory>/.config` | `SET_SEARCH_PATH(XDG, …)` |
+/// | `env["GIT_CONFIG_NOSYSTEM"] == "1"` | `SET_SEARCH_PATH(SYSTEM, "")` (only when set) |
 ///
-/// Anything else stays embedder-controlled (proxy env continues to
-/// drive libgit2's HTTP transport, etc.).
+/// Anything else stays embedder-controlled. Notably proxy env
+/// continues to drive libgit2's HTTP transport, and SSL cert
+/// locations stay at libgit2's defaults — `GIT_OPT_SET_SSL_CERT_LOCATIONS`
+/// has no documented reset path in libgit2's API
+/// (`(NULL, NULL)` returns an error; there's no `GET_SSL_CERT_LOCATIONS`),
+/// so honest cross-sandbox transitions aren't possible. Embedders
+/// that need per-sandbox SSL roots should set them explicitly via
+/// libgit2 and accept process-lifetime stickiness.
 ///
 /// **Honest scope.** This bridge closes the env-isolation gap for
 /// libgit2's config-search and homedir-derived lookups. It does NOT
@@ -44,11 +53,9 @@ internal final class Libgit2Sandboxing: @unchecked Sendable {
     /// Snapshot of the most recent application so we can no-op when
     /// the same sandbox is re-applied.
     private struct AppliedSnapshot: Equatable {
-        let home: String?
-        let xdg: String?
+        let home: String
+        let xdg: String
         let noSystem: Bool
-        let sslCertFile: String?
-        let sslCertPath: String?
     }
     private let lock = NSLock()
     private var lastApplied: AppliedSnapshot?
@@ -77,6 +84,11 @@ internal final class Libgit2Sandboxing: @unchecked Sendable {
 
     /// Apply the sandbox's env→option mapping. Idempotent: re-applying
     /// the same effective mapping is a no-op.
+    ///
+    /// `HOME` and `XDG_CONFIG_HOME` are always applied — env value
+    /// when present, sandbox-derived fallback otherwise. This makes
+    /// the env-isolation default-secure for `Sandbox.rooted(at:)`,
+    /// whose default `environment()` doesn't include either key.
     private func apply(_ sandbox: Sandbox?) throws {
         guard let sandbox else {
             // Return to libgit2's defaults so non-sandboxed code in
@@ -87,43 +99,33 @@ internal final class Libgit2Sandboxing: @unchecked Sendable {
         }
 
         let env = sandbox.environment()
+        let envHome = env["HOME"].flatMap { $0.isEmpty ? nil : $0 }
+        let envXDG = env["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 }
+
+        // Default-secure: when env doesn't supply HOME / XDG_CONFIG_HOME,
+        // fall back to sandbox-derived paths so libgit2's GLOBAL / XDG
+        // config search lands inside the sandbox rather than at the
+        // host user's `~/.gitconfig`.
         let snapshot = AppliedSnapshot(
-            home: env["HOME"].flatMap { $0.isEmpty ? nil : $0 },
-            xdg: env["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 },
-            noSystem: env["GIT_CONFIG_NOSYSTEM"] == "1",
-            sslCertFile: env["GIT_SSL_CAINFO"].flatMap { $0.isEmpty ? nil : $0 },
-            sslCertPath: env["GIT_SSL_CAPATH"].flatMap { $0.isEmpty ? nil : $0 })
+            home: envHome ?? sandbox.homeDirectory.path,
+            xdg: envXDG ?? sandbox.homeDirectory
+                .appendingPathComponent(".config", isDirectory: true).path,
+            noSystem: env["GIT_CONFIG_NOSYSTEM"] == "1")
 
         if snapshot == lastApplied { return }
 
-        // HOME → GLOBAL search + HOMEDIR
-        if let home = snapshot.home {
-            try setSearchPath(level: GIT_CONFIG_LEVEL_GLOBAL.rawValue, path: home)
-            try setHomedir(path: home)
-        } else {
-            try resetSearchPath(level: GIT_CONFIG_LEVEL_GLOBAL.rawValue)
-            try resetHomedir()
-        }
+        // GLOBAL search + HOMEDIR — both pinned to the sandbox view.
+        try setSearchPath(level: GIT_CONFIG_LEVEL_GLOBAL.rawValue, path: snapshot.home)
+        try setHomedir(path: snapshot.home)
 
-        // XDG_CONFIG_HOME → XDG search
-        if let xdg = snapshot.xdg {
-            try setSearchPath(level: GIT_CONFIG_LEVEL_XDG.rawValue, path: xdg)
-        } else {
-            try resetSearchPath(level: GIT_CONFIG_LEVEL_XDG.rawValue)
-        }
+        // XDG search.
+        try setSearchPath(level: GIT_CONFIG_LEVEL_XDG.rawValue, path: snapshot.xdg)
 
-        // GIT_CONFIG_NOSYSTEM=1 → disable system search
+        // GIT_CONFIG_NOSYSTEM=1 → disable system search.
         if snapshot.noSystem {
             try setSearchPath(level: GIT_CONFIG_LEVEL_SYSTEM.rawValue, path: "")
         } else {
             try resetSearchPath(level: GIT_CONFIG_LEVEL_SYSTEM.rawValue)
-        }
-
-        // GIT_SSL_CAINFO / GIT_SSL_CAPATH → SSL cert locations
-        if snapshot.sslCertFile != nil || snapshot.sslCertPath != nil {
-            try setSSLCertLocations(
-                file: snapshot.sslCertFile,
-                path: snapshot.sslCertPath)
         }
 
         lastApplied = snapshot
@@ -170,27 +172,6 @@ internal final class Libgit2Sandboxing: @unchecked Sendable {
         }
     }
 
-    private func setSSLCertLocations(file: String?, path: String?) throws {
-        let rc: Int32
-        switch (file, path) {
-        case (nil, nil):
-            return
-        case (let f?, nil):
-            rc = f.withCString { swiftports_libgit2_set_ssl_cert_locations($0, nil) }
-        case (nil, let p?):
-            rc = p.withCString { swiftports_libgit2_set_ssl_cert_locations(nil, $0) }
-        case (let f?, let p?):
-            rc = f.withCString { fPtr in
-                p.withCString { pPtr in
-                    swiftports_libgit2_set_ssl_cert_locations(fPtr, pPtr)
-                }
-            }
-        }
-        if rc != 0 {
-            throw Libgit2SandboxingError.optionSetFailed(
-                option: "SET_SSL_CERT_LOCATIONS", rc: rc)
-        }
-    }
 }
 
 /// Errors thrown by the libgit2 sandboxing actor when an option SET

@@ -24,6 +24,42 @@ import Sandbox
        .serialized)
 struct Tier2EnvBridgeTests {
 
+    /// Regression for chatgpt-codex-connector PR #19 review comment:
+    /// when the sandbox env doesn't include `HOME` (the default for
+    /// `Sandbox.rooted(at:)`, whose default env is just `["PWD": …]`),
+    /// the bridge MUST still redirect libgit2's config search away
+    /// from the host `~/.gitconfig`. Otherwise the very common
+    /// rooted-sandbox case silently leaks host data.
+    ///
+    /// This test exercises the default-secure path: a Sandbox with
+    /// no env override. Skipped silently when the host has no
+    /// `user.name` configured (CI runners).
+    @Test func bridgeIsDefaultSecureWhenEnvHasNoHOME() async throws {
+        let repoDir = try makeTempRepo()
+        defer { try? FileManager.default.removeItem(at: repoDir) }
+
+        let hostName = readGlobalConfig("user.name")
+        guard let hostName, !hostName.isEmpty else { return }
+
+        // No `environment:` argument — picks up the default from
+        // Sandbox+Factories.swift, which is just `["PWD": <root>]`.
+        let sandbox = Sandbox.rooted(at: repoDir)
+        try await Sandbox.$current.withValue(sandbox) {
+            let client = SwiftGit.GitClient(workingDirectory: repoDir)
+            _ = try await client.localBranches()
+        }
+
+        // After the sandboxed call, libgit2's GLOBAL search path was
+        // set to `sandbox.homeDirectory` (the bridge's fallback).
+        // Confirm by reading user.name at GLOBAL — should be empty.
+        let leaked = readUserNameAtGlobalLevel(repoAt: repoDir)
+        #expect(leaked == nil || leaked?.isEmpty == true,
+                Comment(rawValue:
+                    "Default-secure isolation broken: GLOBAL config still " +
+                    "contains user.name=\(leaked ?? "nil") (expected nothing). " +
+                    "Host gitconfig leaks into Sandbox.rooted(at:) by default."))
+    }
+
     @Test func bridgeRedirectsConfigSearchToSandboxHome() async throws {
         // Set up a fresh repo on disk that we can open via libgit2.
         let repoDir = try makeTempRepo()

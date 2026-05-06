@@ -38,15 +38,4 @@ int swiftports_libgit2_set_search_path(int level, const char *path);
 /// (which is `getenv("HOME")` / `getenv("USERPROFILE")` at init time).
 int swiftports_libgit2_set_homedir(const char *path);
 
-/// `git_libgit2_opts(GIT_OPT_SET_SSL_CERT_LOCATIONS, file, path)`.
-///
-/// Overrides where libgit2 looks for TLS certificate authorities when
-/// using its OpenSSL transport.
-///   - `file`: path to a single concatenated CA-cert PEM file (or NULL)
-///   - `path`: path to a directory containing OpenSSL-hashed CA certs
-///     (or NULL)
-/// Both NULL is allowed — libgit2 will leave its current cert
-/// locations untouched in that case.
-int swiftports_libgit2_set_ssl_cert_locations(const char *file, const char *path);
-
 #endif
