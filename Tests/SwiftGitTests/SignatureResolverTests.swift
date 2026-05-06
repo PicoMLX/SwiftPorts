@@ -49,7 +49,7 @@ struct SignatureResolverTests {
         try Data("hi\n".utf8).write(to: dir.appendingPathComponent("x.txt"))
 
         // Manually invoke the resolver (no shell-out for env scope).
-        try client.withRepository { repo in
+        try await client.withRepository { repo in
             let sig = try SignatureResolver.resolve(
                 role: .author, repo: repo,
                 env: ["GIT_AUTHOR_NAME": "Override Person",
@@ -68,7 +68,7 @@ struct SignatureResolverTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let client = SwiftGit.GitClient(workingDirectory: dir)
 
-        try client.withRepository { repo in
+        try await client.withRepository { repo in
             // Only email overridden; name should still come from config.
             let sig = try SignatureResolver.resolve(
                 role: .author, repo: repo,
@@ -97,7 +97,7 @@ struct SignatureResolverTests {
         p.standardOutput = Pipe(); p.standardError = Pipe()
         try p.run(); p.waitUntilExit()
 
-        try client.withRepository { repo in
+        try await client.withRepository { repo in
             let sig = try SignatureResolver.resolve(
                 role: .author, repo: repo,
                 env: ["GIT_AUTHOR_NAME": "Some Name",
@@ -113,7 +113,7 @@ struct SignatureResolverTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let client = SwiftGit.GitClient(workingDirectory: dir)
 
-        try client.withRepository { repo in
+        try await client.withRepository { repo in
             let sig = try SignatureResolver.resolve(
                 role: .committer, repo: repo,
                 env: ["GIT_COMMITTER_DATE": "1700000000 +0100"])
@@ -130,7 +130,7 @@ struct SignatureResolverTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let client = SwiftGit.GitClient(workingDirectory: dir)
 
-        try client.withRepository { repo in
+        try await client.withRepository { repo in
             // 2024-01-15 10:30:00 UTC → 1705314600.
             let sig = try SignatureResolver.resolve(
                 role: .committer, repo: repo,

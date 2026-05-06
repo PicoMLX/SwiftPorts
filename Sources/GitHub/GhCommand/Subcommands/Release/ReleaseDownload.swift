@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 #if canImport(FoundationNetworking)
 import FoundationNetworking  // URLSession lives in a separate module on Linux
 #endif
@@ -67,7 +68,8 @@ struct ReleaseDownload: AsyncParsableCommand {
                 release.assets.map(\.name).joined(separator: ", "))
         }
 
-        let destDir = URL(fileURLWithPath: directory, isDirectory: true)
+        let destDir = Sandbox.resolve(directory)
+        try await Sandbox.authorize(destDir)
         try FileManager.default.createDirectory(
             at: destDir, withIntermediateDirectories: true)
 
@@ -78,6 +80,8 @@ struct ReleaseDownload: AsyncParsableCommand {
         for asset in matching {
             let dest = destDir.appendingPathComponent(asset.name)
             print("→ \(asset.name) (\(ByteCountFormatter.string(fromByteCount: asset.size, countStyle: .file)))")
+            try await Sandbox.authorize(asset.browserDownloadUrl)
+            try await Sandbox.authorize(dest)
             let (data, _) = try await session.data(from: asset.browserDownloadUrl)
             try data.write(to: dest)
 
@@ -223,7 +227,7 @@ enum ArchiveFormatDetector {
     }
 
     private static func makeStagingTarURL() -> URL {
-        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        Sandbox.temporaryDirectory
             .appendingPathComponent("gh-release-\(UUID().uuidString).tar")
     }
 }

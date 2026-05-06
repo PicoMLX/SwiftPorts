@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import GitHub
+import Sandbox
 
 struct GistCreate: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -43,7 +44,8 @@ struct GistCreate: AsyncParsableCommand {
                 throw ValidationError("Provide at least one file path or pipe via -.")
             }
             for path in files {
-                let url = URL(fileURLWithPath: path)
+                let url = Sandbox.resolve(path)
+                try await Sandbox.authorize(url)
                 let data = try Data(contentsOf: url)
                 let text = String(data: data, encoding: .utf8)
                     ?? String(data: data, encoding: .isoLatin1)

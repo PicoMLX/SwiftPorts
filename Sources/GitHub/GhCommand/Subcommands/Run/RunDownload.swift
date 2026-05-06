@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import GitHub
 import ForgeKit
+import Sandbox
 
 struct RunDownload: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -58,17 +59,22 @@ struct RunDownload: AsyncParsableCommand {
                 (available.isEmpty ? "(none)" : available))
         }
 
-        let destDir = URL(fileURLWithPath: directory, isDirectory: true)
+        let destDir = Sandbox.resolve(directory)
+        try await Sandbox.authorize(destDir)
         try FileManager.default.createDirectory(
             at: destDir, withIntermediateDirectories: true)
 
         for artifact in matching where !artifact.expired {
             let dest = destDir.appendingPathComponent("\(artifact.name).zip")
+            try await Sandbox.authorize(dest)
             let size = ByteCountFormatter.string(
                 fromByteCount: artifact.sizeInBytes, countStyle: .file)
             print("→ \(artifact.name).zip (\(size))")
             // raw() returns the body bytes; URLSession follows the
             // 302 redirect to the signed S3 download URL by default.
+            // The redirect target is below the Swift boundary —
+            // `client.raw()`'s url is what's gated above by
+            // `APIClient.perform`.
             let response = try await client.raw(
                 method: .get,
                 path: "repos/\(target.slug)/actions/artifacts/\(artifact.id)/zip")

@@ -73,7 +73,7 @@ extension GitClient {
     /// in topological/date order (libgit2's `revwalk` default — newest
     /// first, matching `git log` defaults).
     public func log(_ query: LogQuery = LogQuery()) async throws -> [LogEntry] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var walker: OpaquePointer?
             try check(git_revwalk_new(&walker, repo))
             defer { git_revwalk_free(walker) }

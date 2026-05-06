@@ -2,6 +2,7 @@ import Foundation
 import HTTPTypes
 import HTTPTypesFoundation
 import Logging
+import Sandbox
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -64,6 +65,7 @@ public actor OAuthDeviceFlow {
         ])
         let bodyData = Data(body.utf8)
 
+        try await Sandbox.authorize(deviceCodeURL)
         logger.debug("Device flow: requesting device code (scopes: \(scopes))")
         let (data, response) = try await session.upload(for: request, from: bodyData)
         try check2xx(status: response.status.code, body: data, url: deviceCodeURL)
@@ -114,6 +116,7 @@ public actor OAuthDeviceFlow {
         ])
         let bodyData = Data(body.utf8)
 
+        try await Sandbox.authorize(accessTokenURL)
         let (data, response) = try await session.upload(for: request, from: bodyData)
         guard (200..<300).contains(response.status.code) else {
             throw OAuthDeviceFlowError.networkError(

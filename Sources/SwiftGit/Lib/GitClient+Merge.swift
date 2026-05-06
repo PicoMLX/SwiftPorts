@@ -45,7 +45,7 @@ extension GitClient {
         message: String? = nil,
         author: GitSignature? = nil
     ) async throws -> MergeOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve the named ref into an annotated commit.
             var theirAC: OpaquePointer?
             let acRC = git_annotated_commit_from_revspec(&theirAC, repo, theirRef)

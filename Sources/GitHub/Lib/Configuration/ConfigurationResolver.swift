@@ -1,5 +1,6 @@
 import Foundation
 import ForgeKit
+import Sandbox
 
 /// Async resolver that builds a ``Configuration`` by layering env
 /// vars (sync, via `Configuration.live()`) with the configured
@@ -80,7 +81,7 @@ public enum TokenSource: Sendable {
     /// disambiguate between the keyring and the plaintext fallback
     /// when the env path isn't taken.
     public static func detect(
-        env: [String: String] = ProcessInfo.processInfo.environment,
+        env: [String: String] = Sandbox.environment,
         configToken: String?,
         hostsToken: String? = nil
     ) -> TokenSource {

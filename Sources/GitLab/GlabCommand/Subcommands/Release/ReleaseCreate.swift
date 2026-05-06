@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import GitLab
+import Sandbox
 
 struct ReleaseCreate: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -48,8 +49,9 @@ struct ReleaseCreate: AsyncParsableCommand {
                 resolvedNotes = String(decoding: FileHandle.standardInput.availableData,
                                        as: UTF8.self)
             } else {
-                resolvedNotes = try String(contentsOf: URL(fileURLWithPath: path),
-                                           encoding: .utf8)
+                let url = Sandbox.resolve(path)
+                try await Sandbox.authorize(url)
+                resolvedNotes = try String(contentsOf: url, encoding: .utf8)
             }
         } else {
             resolvedNotes = notes

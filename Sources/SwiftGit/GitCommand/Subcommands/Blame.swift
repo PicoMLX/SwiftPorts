@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 import SwiftGit
 
 /// `git blame <path>`: show, for each line, the commit that last
@@ -21,8 +22,8 @@ struct Blame: AsyncParsableCommand {
         // Read the file from disk (real git pairs blame with the
         // working-tree content; for committed-only blame, swap to
         // git_blob_lookup of the latest commit's tree).
-        let cwd = CommandContext.currentDirectory
-        let url = cwd.appendingPathComponent(path)
+        let url = Sandbox.resolve(path)
+        try await Sandbox.authorize(url)
         let body: String
         do {
             body = try String(contentsOf: url, encoding: .utf8)

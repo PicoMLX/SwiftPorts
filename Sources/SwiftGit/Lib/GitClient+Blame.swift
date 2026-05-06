@@ -24,7 +24,7 @@ extension GitClient {
     /// pairs this output with the file's lines to produce real-git's
     /// formatted output.
     public func blame(path: String) async throws -> [BlameHunk] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var opts = git_blame_options()
             try check(git_blame_options_init(&opts, UInt32(GIT_BLAME_OPTIONS_VERSION)))
 

@@ -22,7 +22,7 @@ extension GitClient {
         abbrev: Int = 7,
         dirty: Bool = false
     ) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve `committish` → object so describe walks from it
             // rather than HEAD.
             var obj: OpaquePointer?

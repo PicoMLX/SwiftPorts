@@ -2,6 +2,7 @@ import Foundation
 import HTTPTypes
 import HTTPTypesFoundation
 import Logging
+import Sandbox
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -142,6 +143,10 @@ public actor APIClient {
         body: Data?,
         extraHeaders: HTTPFields = [:]
     ) async throws -> APIResponse {
+        // Sandbox boundary: every REST call (typed get/send/delete,
+        // raw, paginate) flows through here. ~50 GlabCommand subcommand
+        // sites are subsumed by this single gate.
+        try await Sandbox.authorize(url)
         var request = HTTPRequest(method: method, url: url)
         request.headerFields[.accept] = "application/json"
         request.headerFields[.userAgent] = configuration.userAgent

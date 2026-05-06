@@ -65,7 +65,7 @@ struct GitClientCheckoutTests {
         let current = try await client.currentBranch()
         #expect(current == "feat")
         // Listed by `localBranches` too.
-        let names = try client.localBranches().sorted()
+        let names = try await client.localBranches().sorted()
         #expect(names == ["feat", "main"])
     }
 

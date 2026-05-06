@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import GitHub
 import ForgeKit
+import Sandbox
 
 struct RepoClone: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -47,7 +48,7 @@ struct RepoClone: AsyncParsableCommand {
         let repo: Repository = try await client.get("repos/\(ref.slug)")
 
         let url = try cloneURL(for: repo)
-        let destDir = directory.map { URL(fileURLWithPath: $0) }
+        let destDir = directory.map { Sandbox.resolve($0) }
 
         let git = CommandContext.gitClient()
         print("Cloning \(repo.fullName) from \(url.absoluteString)…")

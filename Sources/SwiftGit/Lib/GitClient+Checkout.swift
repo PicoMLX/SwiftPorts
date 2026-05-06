@@ -21,7 +21,7 @@ extension GitClient {
         startPoint: String = "HEAD",
         force: Bool = false
     ) async throws -> CheckoutBranchOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve start-point to a commit.
             var startObject: OpaquePointer?
             try check(git_revparse_single(&startObject, repo, startPoint))
@@ -72,7 +72,7 @@ extension GitClient {
     /// working tree to match the index (discards unstaged edits).
     public func checkoutPaths(_ paths: [String]) async throws {
         guard !paths.isEmpty else { return }
-        try withRepository { repo in
+        try await withRepository { repo in
             var index: OpaquePointer?
             try check(git_repository_index(&index, repo))
             defer { git_index_free(index) }
@@ -94,7 +94,7 @@ extension GitClient {
     /// updates the index in this form).
     public func checkoutPaths(_ paths: [String], from ref: String) async throws {
         guard !paths.isEmpty else { return }
-        try withRepository { repo in
+        try await withRepository { repo in
             var object: OpaquePointer?
             try check(git_revparse_single(&object, repo, ref))
             defer { git_object_free(object) }

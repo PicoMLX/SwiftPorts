@@ -36,7 +36,7 @@ extension GitClient {
         author: GitSignature?,
         flags: StashSaveFlags = .default
     ) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             var signature: UnsafeMutablePointer<git_signature>?
             if let author {
                 try check(author.name.withCString { n in
@@ -66,7 +66,7 @@ extension GitClient {
     /// Apply stash entry `index` (0 = most recent) to the working tree.
     /// `reinstateIndex == true` corresponds to `git stash apply --index`.
     public func stashApply(index: Int, reinstateIndex: Bool = false) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var opts = git_stash_apply_options()
             try check(git_stash_apply_options_init(
                 &opts, UInt32(GIT_STASH_APPLY_OPTIONS_VERSION)))
@@ -79,7 +79,7 @@ extension GitClient {
 
     /// Apply + drop. Equivalent to `git stash pop`.
     public func stashPop(index: Int, reinstateIndex: Bool = false) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var opts = git_stash_apply_options()
             try check(git_stash_apply_options_init(
                 &opts, UInt32(GIT_STASH_APPLY_OPTIONS_VERSION)))
@@ -92,14 +92,14 @@ extension GitClient {
 
     /// Remove a single stash entry without applying it.
     public func stashDrop(index: Int) async throws {
-        _ = try withRepository { repo in
+        _ = try await withRepository { repo in
             try check(git_stash_drop(repo, index))
         }
     }
 
     /// List all stash entries, most-recent first (index 0).
     public func stashList() async throws -> [Libgit2StashEntry] {
-        try withRepository { repo in
+        try await withRepository { repo in
             // libgit2's foreach takes a payload — wrap our collector
             // in a class so the C trampoline can mutate it via
             // `Unmanaged.passUnretained`.
@@ -137,7 +137,7 @@ extension GitClient {
     /// stash modified relative to HEAD when it was created). Returns
     /// the same triple `commitDetailed` uses.
     public func stashShow(index: Int) async throws -> (filesChanged: Int, insertions: Int, deletions: Int) {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Look up `stash@{N}` by walking the stash list — using
             // git_revparse_single("stash@{N}") would be brittle if the
             // reflog is empty. The foreach gives us the OID directly.
@@ -207,7 +207,7 @@ extension GitClient {
     /// 2. Create a new local branch at that parent.
     /// 3. Check the branch out and apply the stash, then drop it.
     public func stashBranch(name: String, index: Int = 0) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Resolve stash@{N} → parent OID.
             final class Finder {
                 let target: Int; var oid: git_oid?

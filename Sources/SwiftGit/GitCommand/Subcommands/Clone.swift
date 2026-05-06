@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Sandbox
 
 struct Clone: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -17,7 +18,7 @@ struct Clone: AsyncParsableCommand {
         guard let parsed = URL(string: url) else {
             throw CLIError.stderr("fatal: '\(url)' is not a valid URL", exitCode: 128)
         }
-        let dest = directory.map { URL(fileURLWithPath: $0) }
+        let dest = directory.map { Sandbox.resolve($0) }
         let displayName = directory ?? defaultDirName(for: parsed)
 
         // Real git emits this header to stderr before the network work

@@ -38,7 +38,7 @@ extension GitClient {
         to target: String = "HEAD",
         mode: ResetMode = .mixed
     ) async throws -> ResetOutcome {
-        try withRepository { repo in
+        try await withRepository { repo in
             var object: OpaquePointer?
             try check(git_revparse_single(&object, repo, target))
             defer { git_object_free(object) }
@@ -72,7 +72,7 @@ extension GitClient {
     @discardableResult
     public func reset(paths: [String], from target: String = "HEAD") async throws -> ResetOutcome {
         guard !paths.isEmpty else { return .paths([]) }
-        return try withRepository { repo in
+        return try await withRepository { repo in
             var object: OpaquePointer?
             try check(git_revparse_single(&object, repo, target))
             defer { git_object_free(object) }

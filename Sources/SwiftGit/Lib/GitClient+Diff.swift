@@ -43,7 +43,7 @@ extension GitClient {
         paths: [String] = [],
         contextLines: UInt32? = nil
     ) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             // Hold the strdup'd pathspec copies for the entire body so
             // libgit2 can read them while walking the diff.
             var copies: [UnsafeMutablePointer<CChar>?] = paths.map { strdup($0) }
@@ -234,7 +234,7 @@ extension GitClient {
     /// True iff `spec` resolves to an object via `git_revparse_single`.
     /// Used for smart ref-vs-path disambiguation in `git diff <foo>`.
     public func canResolveRef(_ spec: String) async throws -> Bool {
-        try withRepository { repo in
+        try await withRepository { repo in
             var object: OpaquePointer?
             let rc = git_revparse_single(&object, repo, spec)
             if rc == 0 { git_object_free(object); return true }
@@ -245,7 +245,7 @@ extension GitClient {
     /// Compute the merge-base of two commit-ishes — used to implement
     /// the `<a>...<b>` triple-dot diff notation.
     public func mergeBase(_ a: String, _ b: String) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             var aObj: OpaquePointer?
             try check(git_revparse_single(&aObj, repo, a))
             defer { git_object_free(aObj) }

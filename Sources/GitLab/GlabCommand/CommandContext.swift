@@ -1,6 +1,7 @@
 import Foundation
 import ForgeKit
 import GitLab
+import Sandbox
 import SwiftGit
 
 /// Per-process defaults for command runtime: a shared resolver, the
@@ -23,7 +24,7 @@ enum CommandContext {
     /// inference and clone/fetch/push. HTTPS auth routes through glab's
     /// existing token resolution.
     static func gitClient(
-        workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        workingDirectory: URL = Sandbox.currentDirectory
     ) -> any ForgeKit.GitClient {
         SwiftGit.GitClient(
             workingDirectory: workingDirectory,

@@ -1,5 +1,6 @@
 import Foundation
 import ForgeKit
+import Sandbox
 import libgit2
 
 /// Real-git-compatible identity resolution for commit author + committer.
@@ -29,7 +30,7 @@ enum SignatureResolver {
         role: Role,
         override: GitSignature? = nil,
         repo: OpaquePointer?,
-        env: [String: String] = ProcessInfo.processInfo.environment
+        env: [String: String] = Sandbox.environment
     ) throws -> UnsafeMutablePointer<git_signature>? {
         let prefix = role == .author ? "GIT_AUTHOR" : "GIT_COMMITTER"
 

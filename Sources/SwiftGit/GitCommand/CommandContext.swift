@@ -1,14 +1,16 @@
 import Foundation
 import ForgeKit
+import Sandbox
 import SwiftGit
 
 /// Per-process defaults: builds a `SwiftGit.GitClient` rooted in the
 /// caller's working directory, with credentials resolved from common
 /// env vars when available.
 enum CommandContext {
-    /// Working directory used by every subcommand.
+    /// Working directory used by every subcommand. Reads from the
+    /// active sandbox's PWD when set, else process CWD.
     static var currentDirectory: URL {
-        URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        Sandbox.currentDirectory
     }
 
     /// libgit2-backed client with env-driven credential lookup.
@@ -23,24 +25,25 @@ enum CommandContext {
     /// + `GIT_PASSWORD`. Returns `nil` for non-userpass challenges so
     /// libgit2 surfaces a clean auth error instead of looping.
     static func envCredentialProvider() -> CredentialProvider? {
-        let env = ProcessInfo.processInfo.environment
         return { url, _, allowed in
             guard allowed.contains(.userPassword) else { return nil }
 
             switch url.host {
             case "github.com":
-                if let token = env["GH_TOKEN"] ?? env["GITHUB_TOKEN"], !token.isEmpty {
+                if let token = Sandbox.env("GH_TOKEN") ?? Sandbox.env("GITHUB_TOKEN"),
+                   !token.isEmpty {
                     return .token(token)
                 }
             case "gitlab.com":
-                if let token = env["GITLAB_TOKEN"], !token.isEmpty {
+                if let token = Sandbox.env("GITLAB_TOKEN"), !token.isEmpty {
                     return .token(token, username: "oauth2")
                 }
             default:
                 break
             }
 
-            if let user = env["GIT_USERNAME"], let pass = env["GIT_PASSWORD"],
+            if let user = Sandbox.env("GIT_USERNAME"),
+               let pass = Sandbox.env("GIT_PASSWORD"),
                !user.isEmpty, !pass.isEmpty {
                 return .userPassword(username: user, password: pass)
             }

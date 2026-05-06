@@ -60,7 +60,7 @@ struct GitClientNewSurfaceTests {
         _ = try await client.checkoutNewBranch(name: "feat")
         try await client.checkout(ref: "main")
         try await client.branchDelete(name: "feat")
-        let names = try client.localBranches()
+        let names = try await client.localBranches()
         #expect(names == ["main"])
     }
 
@@ -88,7 +88,7 @@ struct GitClientNewSurfaceTests {
         let client = SwiftGit.GitClient(workingDirectory: dir)
         _ = try await client.checkoutNewBranch(name: "feat")
         try await client.branchRename(to: "feat-renamed")
-        let names = try client.localBranches().sorted()
+        let names = try await client.localBranches().sorted()
         #expect(names == ["feat-renamed", "main"])
     }
 

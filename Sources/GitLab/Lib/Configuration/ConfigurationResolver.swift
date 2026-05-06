@@ -1,5 +1,6 @@
 import Foundation
 import ForgeKit
+import Sandbox
 
 /// Async resolver that builds a ``Configuration`` by layering env vars
 /// (sync, via `Configuration.live()`) with the configured ``SecretStore``.
@@ -61,7 +62,7 @@ public enum TokenSource: Sendable {
     case none
 
     public static func detect(
-        env: [String: String] = ProcessInfo.processInfo.environment,
+        env: [String: String] = Sandbox.environment,
         configToken: String?
     ) -> TokenSource {
         if let v = env["GITLAB_TOKEN"], !v.isEmpty, configToken == v {

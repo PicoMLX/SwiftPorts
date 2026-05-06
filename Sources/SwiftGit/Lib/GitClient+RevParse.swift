@@ -7,7 +7,7 @@ extension GitClient {
     /// Resolve `spec` (a ref, sha, abbrev, `<ref>~N`, etc.) to a full
     /// 40-char SHA. Throws when the spec can't be resolved.
     public func resolveOID(_ spec: String) async throws -> String {
-        try withRepository { repo in
+        try await withRepository { repo in
             var obj: OpaquePointer?
             try check(git_revparse_single(&obj, repo, spec))
             defer { git_object_free(obj) }
@@ -20,7 +20,7 @@ extension GitClient {
     /// bare repos). Equivalent of `git rev-parse --git-dir`. Returns
     /// nil when called outside any repo.
     public func gitDir() async throws -> String? {
-        try withRepository { repo in
+        try await withRepository { repo in
             git_repository_path(repo).map { String(cString: $0) }
         }
     }
@@ -28,7 +28,7 @@ extension GitClient {
     /// Working-tree root, the value `git rev-parse --show-toplevel`
     /// prints. Nil for bare repositories.
     public func toplevel() async throws -> String? {
-        try withRepository { repo in
+        try await withRepository { repo in
             git_repository_workdir(repo).map { String(cString: $0) }
         }
     }
@@ -36,7 +36,7 @@ extension GitClient {
     /// Tracked file paths (everything currently in the index).
     /// Equivalent of `git ls-files`.
     public func indexedPaths() async throws -> [String] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var index: OpaquePointer?
             try check(git_repository_index(&index, repo))
             defer { git_index_free(index) }
@@ -58,7 +58,7 @@ extension GitClient {
         // We rely on `withRepository` succeeding plus a non-nil
         // workdir to distinguish bare from non-bare.
         do {
-            return try withRepository { repo in
+            return try await withRepository { repo in
                 git_repository_workdir(repo) != nil
             }
         } catch {

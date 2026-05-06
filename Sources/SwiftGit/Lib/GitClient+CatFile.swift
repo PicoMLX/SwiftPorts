@@ -18,7 +18,7 @@ extension GitClient {
     /// without materialising the payload — corresponds to
     /// `git cat-file -t -s`.
     public func objectMetadata(of revspec: String) async throws -> ObjectMetadata {
-        try withRepository { repo in
+        try await withRepository { repo in
             var obj: OpaquePointer?
             try check(revspec.withCString { name in
                 git_revparse_single(&obj, repo, name)
@@ -59,7 +59,7 @@ extension GitClient {
     /// Mirrors `git cat-file -p` for blobs — for commits/trees you'll
     /// want the structured accessors instead.
     public func catFileBlob(_ revspec: String) async throws -> Data {
-        try withRepository { repo in
+        try await withRepository { repo in
             var obj: OpaquePointer?
             try check(revspec.withCString { name in
                 git_revparse_single(&obj, repo, name)

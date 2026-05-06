@@ -59,7 +59,7 @@ struct Add: AsyncParsableCommand {
                     "fatal: pathspec '\(path)' did not match any files",
                     exitCode: 128)
             }
-            if !force, (try? client.isIgnored(path)) == true {
+            if !force, (try? await client.isIgnored(path)) == true {
                 ignored.append(path)
             }
         }

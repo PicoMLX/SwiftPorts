@@ -18,7 +18,7 @@ extension GitClient {
     /// when the key isn't set. With `scope == nil` reads through the
     /// merged repo config; an explicit scope opens just that file.
     public func configGet(_ name: String, scope: ConfigScope? = nil) async throws -> String? {
-        try withRepository { repo in
+        try await withRepository { repo in
             var cfg: OpaquePointer?
             try check(git_repository_config(&cfg, repo))
             defer { git_config_free(cfg) }
@@ -40,7 +40,7 @@ extension GitClient {
     /// Set a config value. Defaults to writing to the local repo
     /// config, matching `git config <name> <value>`.
     public func configSet(_ name: String, _ value: String, scope: ConfigScope = .local) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var cfg: OpaquePointer?
             try check(git_repository_config(&cfg, repo))
             defer { git_config_free(cfg) }
@@ -59,7 +59,7 @@ extension GitClient {
     /// Remove a config entry. Returns true if removed, false if absent.
     @discardableResult
     public func configUnset(_ name: String, scope: ConfigScope = .local) async throws -> Bool {
-        try withRepository { repo in
+        try await withRepository { repo in
             var cfg: OpaquePointer?
             try check(git_repository_config(&cfg, repo))
             defer { git_config_free(cfg) }
@@ -80,7 +80,7 @@ extension GitClient {
     /// global + system layers). Returns `(name, value)` pairs in
     /// libgit2's iteration order — matches `git config --list`.
     public func configList() async throws -> [(name: String, value: String)] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var cfg: OpaquePointer?
             try check(git_repository_config(&cfg, repo))
             defer { git_config_free(cfg) }

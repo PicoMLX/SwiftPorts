@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import GitHub
 import ForgeKit
+import Sandbox
 
 struct RepoFork: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -52,7 +53,7 @@ struct RepoFork: AsyncParsableCommand {
             print("\(ANSI.green("✓")) Cloned fork to ./\(fork.name)")
             // Add upstream remote so users can keep their fork in sync.
             let upstreamURL = URL(string: "\(target.urlString)")!
-            let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            let cwd = Sandbox.currentDirectory
                 .appendingPathComponent(fork.name, isDirectory: true)
             let cloneGit = CommandContext.gitClient(workingDirectory: cwd)
             try await cloneGit.addRemote(name: "upstream", url: upstreamURL)

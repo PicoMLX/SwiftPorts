@@ -1,4 +1,5 @@
 import Foundation
+import Sandbox
 import libgit2
 
 /// Rich result returned by ``GitClient/commitDetailed(message:author:allowEmpty:)``.
@@ -26,7 +27,8 @@ extension GitClient {
     /// Whether `path` (relative to the repo workdir) is currently
     /// matched by a `.gitignore` rule. Throws on libgit2 failure;
     /// `false` if the path doesn't exist or isn't ignored.
-    public func isIgnored(_ path: String) throws -> Bool {
+    public func isIgnored(_ path: String) async throws -> Bool {
+        try await Sandbox.authorize(workingDirectory)
         Libgit2.ensureInitialized()
         var repo: OpaquePointer?
         try check(git_repository_open_ext(&repo, workingDirectory.path, 0, nil))
@@ -39,7 +41,8 @@ extension GitClient {
 
     /// Local branch names in the repo. Order matches libgit2's iterator
     /// (typically refdb order — alphabetical for refs/heads/*).
-    public func localBranches() throws -> [String] {
+    public func localBranches() async throws -> [String] {
+        try await Sandbox.authorize(workingDirectory)
         Libgit2.ensureInitialized()
         var repo: OpaquePointer?
         try check(git_repository_open_ext(&repo, workingDirectory.path, 0, nil))
@@ -77,7 +80,7 @@ extension GitClient {
     /// List configured remote names. Sorted alphabetically to match
     /// `git remote`'s default order.
     public func remoteList() async throws -> [String] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var arr = git_strarray()
             try check(git_remote_list(&arr, repo))
             defer { git_strarray_dispose(&arr) }
@@ -94,7 +97,7 @@ extension GitClient {
     /// Delete a remote and the associated `branch.<x>.remote` config
     /// entries (libgit2 does the cleanup).
     public func remoteDelete(name: String) async throws {
-        _ = try withRepository { repo in
+        _ = try await withRepository { repo in
             try check(name.withCString { n in
                 git_remote_delete(repo, n)
             })
@@ -105,7 +108,7 @@ extension GitClient {
     /// branch refspec problems libgit2 surfaces (typically empty).
     @discardableResult
     public func remoteRename(from oldName: String, to newName: String) async throws -> [String] {
-        try withRepository { repo in
+        try await withRepository { repo in
             var problems = git_strarray()
             try check(git_remote_rename(&problems, repo, oldName, newName))
             defer { git_strarray_dispose(&problems) }
@@ -121,7 +124,7 @@ extension GitClient {
 
     /// Update an existing remote's URL.
     public func remoteSetURL(name: String, url: URL) async throws {
-        _ = try withRepository { repo in
+        _ = try await withRepository { repo in
             try check(name.withCString { n in
                 url.absoluteString.withCString { u in
                     git_remote_set_url(repo, n, u)
@@ -134,6 +137,7 @@ extension GitClient {
     /// `git config remote.<name>.url` existence; used by `git remote add`
     /// to fail fast with the same error wording git uses.
     public func remoteExists(named name: String) async throws -> Bool {
+        try await Sandbox.authorize(workingDirectory)
         Libgit2.ensureInitialized()
         var repo: OpaquePointer?
         try check(git_repository_open_ext(&repo, workingDirectory.path, 0, nil))
@@ -153,7 +157,7 @@ extension GitClient {
     /// Delete a local branch. Equivalent to `git branch -d <name>`
     /// (or `-D` with `force`).
     public func branchDelete(name: String, force: Bool = false) async throws {
-        try withRepository { repo in
+        try await withRepository { repo in
             var ref: OpaquePointer?
             let lookupRC = git_branch_lookup(&ref, repo, name, GIT_BRANCH_LOCAL)
             if lookupRC == GIT_ENOTFOUND.rawValue {
@@ -191,7 +195,7 @@ extension GitClient {
             }
             resolvedOld = current
         }
-        try withRepository { repo in
+        try await withRepository { repo in
             var ref: OpaquePointer?
             try check(git_branch_lookup(&ref, repo, resolvedOld, GIT_BRANCH_LOCAL))
             defer { git_reference_free(ref) }

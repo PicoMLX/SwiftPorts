@@ -2,6 +2,7 @@ import Foundation
 import HTTPTypes
 import HTTPTypesFoundation
 import Logging
+import Sandbox
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -150,6 +151,11 @@ public actor APIClient {
         body: Data?,
         extraHeaders: HTTPFields = [:]
     ) async throws -> APIResponse {
+        // Sandbox boundary: every REST call (typed get/send/delete,
+        // raw, paginate, plus the OAuthDeviceFlow + GraphQL clients
+        // that go through this method) is gated here. ~60+ subcommand
+        // call sites are subsumed by this single gate.
+        try await Sandbox.authorize(url)
         var request = HTTPRequest(method: method, url: url)
         request.headerFields[.accept] = "application/vnd.github+json"
         request.headerFields[.gitHubAPIVersion] = "2022-11-28"
