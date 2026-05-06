@@ -161,4 +161,32 @@ import Testing
             _ = try ApiCommand.readInputFile("/definitely/not/a/real/path-\(UUID().uuidString).json")
         }
     }
+
+    // MARK: queryStringValue serialisation (used when --input + -f/-F mix)
+
+    @Test func queryStringValueSerialisesScalarsLikeUpstream() {
+        // Mirrors upstream's addQueryParam: bool → "true"/"false",
+        // int/double → decimal string, string → as-is, null → "".
+        #expect(ApiCommand.queryStringValue("hi") == "hi")
+        #expect(ApiCommand.queryStringValue(true) == "true")
+        #expect(ApiCommand.queryStringValue(false) == "false")
+        #expect(ApiCommand.queryStringValue(7) == "7")
+        #expect(ApiCommand.queryStringValue(1.5) == "1.5")
+        #expect(ApiCommand.queryStringValue(NSNull()) == "")
+    }
+
+    @Test func fieldFlagsBecomeQueryItemsWhenInputIsUsed() throws {
+        // Per upstream `gh api` manual: with --input, field flags get
+        // appended to the endpoint URL's query string instead of being
+        // dropped. Order must match upstream: -f raw fields first, then
+        // -F typed fields, with -F values coerced.
+        let items = try ApiCommand.buildQueryItems(
+            rawFields: ["q=swift"],
+            fields: ["per_page=1", "draft=true"]
+        )
+        #expect(items.count == 3)
+        #expect(items[0].name == "q" && items[0].value == "swift")
+        #expect(items[1].name == "per_page" && items[1].value == "1")
+        #expect(items[2].name == "draft" && items[2].value == "true")
+    }
 }

@@ -74,6 +74,9 @@ struct ApiCommand: AsyncParsableCommand {
         let client = try await CommandContext.apiClient(host: hostname)
 
         let body = try buildBody()
+        // When --input is set the user owns the body; -f/-F instead
+        // become endpoint query-string params, per upstream gh.
+        let query = inputFile != nil ? try buildQueryItems() : []
 
         // GraphQL is always POST. -f/-F or --input also implies POST when
         // the user didn't override the method. Matches upstream gh.
@@ -92,6 +95,7 @@ struct ApiCommand: AsyncParsableCommand {
         let response = try await client.raw(
             method: httpMethod,
             path: endpoint,
+            query: query,
             body: body
         )
 
@@ -142,6 +146,40 @@ struct ApiCommand: AsyncParsableCommand {
         return try JSONSerialization.data(withJSONObject: dict, options: [])
     }
 
+    /// Build URL query items from `-f`/`-F` fields. Used only when
+    /// `--input` is set; mirrors upstream's `addQuery(requestPath, params)`
+    /// behaviour where field flags become endpoint query-string params.
+    /// `-f` values stay as-is; `-F` values are coerced (true/false/null,
+    /// integers, doubles) and serialised the same way upstream's
+    /// `addQueryParam` formats scalars.
+    private func buildQueryItems() throws -> [URLQueryItem] {
+        try Self.buildQueryItems(rawFields: rawFields, fields: fields)
+    }
+
+    static func buildQueryItems(rawFields: [String], fields: [String]) throws -> [URLQueryItem] {
+        var items: [URLQueryItem] = []
+        for raw in rawFields {
+            let (k, v) = try splitField(raw)
+            items.append(URLQueryItem(name: k, value: v))
+        }
+        for typed in fields {
+            let (k, v) = try splitField(typed)
+            items.append(URLQueryItem(name: k, value: queryStringValue(coerceField(v))))
+        }
+        return items
+    }
+
+    static func queryStringValue(_ value: Any) -> String {
+        switch value {
+        case let s as String: return s
+        case let b as Bool: return b ? "true" : "false"
+        case let i as Int: return String(i)
+        case let d as Double: return String(d)
+        case is NSNull: return ""
+        default: return String(describing: value)
+        }
+    }
+
     /// Read the body bytes referenced by `--input <file|->`. `-` reads
     /// from standard input; any other value is a path. Mirrors upstream
     /// `gh api`'s `openUserFile` semantics: bytes go on the wire
@@ -186,6 +224,14 @@ struct ApiCommand: AsyncParsableCommand {
     }
 
     private func splitField(_ s: String) throws -> (String, String) {
+        try Self.splitField(s)
+    }
+
+    private func coerce(_ value: String) -> Any {
+        Self.coerceField(value)
+    }
+
+    static func splitField(_ s: String) throws -> (String, String) {
         guard let eq = s.firstIndex(of: "=") else {
             throw ValidationError("Field '\(s)' must be KEY=VALUE")
         }
@@ -194,7 +240,7 @@ struct ApiCommand: AsyncParsableCommand {
         return (key, value)
     }
 
-    private func coerce(_ value: String) -> Any {
+    static func coerceField(_ value: String) -> Any {
         switch value.lowercased() {
         case "true": return true
         case "false": return false
