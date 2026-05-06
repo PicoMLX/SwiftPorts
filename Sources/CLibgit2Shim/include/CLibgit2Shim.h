@@ -1,0 +1,52 @@
+#ifndef SWIFTPORTS_CLIBGIT2_SHIM_H
+#define SWIFTPORTS_CLIBGIT2_SHIM_H
+
+/// Typed wrappers around the small subset of `git_libgit2_opts(int, ...)`
+/// that the `Sandbox` ↔ libgit2 bridge needs.
+///
+/// libgit2's options API is variadic in C: `int git_libgit2_opts(int option, ...)`.
+/// Swift's importer refuses C variadic functions, and calling them via
+/// `dlsym` + a non-variadic function-pointer cast silently mismatches
+/// the variadic ABI on arm64 — args land in the wrong slots, libgit2's
+/// switch-on-option-enum reads garbage, no error is returned, and the
+/// option SET silently no-ops. Verified during the issue #18 design
+/// discussion.
+///
+/// This shim sits at the C side of the boundary and dispatches the
+/// variadic call from C, where the va_arg ABI is correct.
+///
+/// All functions return libgit2's standard `int` rc: `0` on success,
+/// negative on failure.
+
+/// `git_libgit2_opts(GIT_OPT_SET_SEARCH_PATH, level, path)`.
+///
+/// `level` must be one of:
+///   - `GIT_CONFIG_LEVEL_SYSTEM` (2)
+///   - `GIT_CONFIG_LEVEL_XDG` (3)
+///   - `GIT_CONFIG_LEVEL_GLOBAL` (4)
+///   - `GIT_CONFIG_LEVEL_PROGRAMDATA` (1)
+///
+/// `path` is the new search directory at that level. Empty string
+/// disables that level entirely. `NULL` resets to libgit2's default.
+int swiftports_libgit2_set_search_path(int level, const char *path);
+
+/// `git_libgit2_opts(GIT_OPT_SET_HOMEDIR, path)`.
+///
+/// Overrides the directory libgit2 considers the current user's home
+/// for non-config lookups (netrc, hook discovery, `~user` expansion in
+/// remote URLs, etc.). Pass `NULL` to reset to libgit2's default
+/// (which is `getenv("HOME")` / `getenv("USERPROFILE")` at init time).
+int swiftports_libgit2_set_homedir(const char *path);
+
+/// `git_libgit2_opts(GIT_OPT_SET_SSL_CERT_LOCATIONS, file, path)`.
+///
+/// Overrides where libgit2 looks for TLS certificate authorities when
+/// using its OpenSSL transport.
+///   - `file`: path to a single concatenated CA-cert PEM file (or NULL)
+///   - `path`: path to a directory containing OpenSSL-hashed CA certs
+///     (or NULL)
+/// Both NULL is allowed — libgit2 will leave its current cert
+/// locations untouched in that case.
+int swiftports_libgit2_set_ssl_cert_locations(const char *file, const char *path);
+
+#endif
