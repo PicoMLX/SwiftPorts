@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -43,14 +44,14 @@ struct CiStatus: AsyncParsableCommand {
             // is a TTY. If not, just print successive lines.
             let summary = makeSummaryLine(pipeline: pipeline, jobs: jobs, ref: ref)
             if TTY.isStdoutColorEnabled {
-                print("\u{1B}[2K\r\(summary)", terminator: "")
-                FileHandle.standardOutput.write(Data())
+                Shell.print("\u{1B}[2K\r\(summary)", terminator: "")
+                Shell.current.stdout.write(Data())
             } else {
-                print(summary)
+                Shell.print(summary)
             }
 
             if once || pipeline.status.isTerminal {
-                if TTY.isStdoutColorEnabled { print() } // newline after final tick
+                if TTY.isStdoutColorEnabled { Shell.print() } // newline after final tick
                 printJobBreakdown(jobs)
                 if case .failed = pipeline.status { throw ExitCode(1) }
                 return
@@ -87,7 +88,7 @@ struct CiStatus: AsyncParsableCommand {
     }
 
     private func printJobBreakdown(_ jobs: [Job]) {
-        print()
+        Shell.print()
         CiView.printJobsByStage(jobs)
     }
 }

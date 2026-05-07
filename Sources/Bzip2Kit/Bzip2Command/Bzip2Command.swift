@@ -6,7 +6,7 @@
 import ArgumentParser
 import Foundation
 import Bzip2Kit
-import Sandbox
+import ShellKit
 
 /// Mode shared by `bzip2` / `bunzip2` / `bzcat` — the same engine
 /// dispatched by argv[0]. We expose three `AsyncParsableCommand`
@@ -189,11 +189,11 @@ enum Bzip2Engine {
                 try await processStdin(mode: mode)
                 continue
             }
-            let url = Sandbox.resolve(file)
+            let url = Shell.resolve(file)
             if stdout {
                 try await emitFileToStdout(url: url, mode: mode)
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> stdout\n".utf8))
                 }
             } else {
@@ -207,7 +207,7 @@ enum Bzip2Engine {
                         at: url, keepInput: keep, overwrite: force)
                 }
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> \(result.path)\n".utf8))
                 }
             }
@@ -215,24 +215,24 @@ enum Bzip2Engine {
     }
 
     private static func processStdin(mode: Bzip2Mode) async throws {
-        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let input = await Shell.current.stdin.readAllData()
         let output: Data
         switch mode {
         case .compress:   output = try await Bzip2Kit.Bzip2.compress(input)
         case .decompress: output = try await Bzip2Kit.Bzip2.decompress(input)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 
     private static func emitFileToStdout(url: URL, mode: Bzip2Mode) async throws {
-        try await Sandbox.authorize(url)
+        try await Shell.authorize(url)
         let bytes = try Data(contentsOf: url)
         let output: Data
         switch mode {
         case .compress:   output = try await Bzip2Kit.Bzip2.compress(bytes)
         case .decompress: output = try await Bzip2Kit.Bzip2.decompress(bytes)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 }
 

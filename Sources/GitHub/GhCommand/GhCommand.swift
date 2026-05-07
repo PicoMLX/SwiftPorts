@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Sandbox
+import ShellKit
 
 public struct GhCommand: AsyncParsableCommand {
     /// Custom entry point so we can rewrite bare `--json` (no value, or
@@ -8,7 +8,7 @@ public struct GhCommand: AsyncParsableCommand {
     /// detect the empty value and print the available-fields list, the
     /// way upstream `gh` does.
     public static func main() async {
-        var args = Array(Sandbox.arguments.dropFirst())
+        var args = Array(Shell.arguments.dropFirst())
         if let idx = args.firstIndex(of: "--json") {
             let next = idx + 1
             if next >= args.count || args[next].hasPrefix("-") {

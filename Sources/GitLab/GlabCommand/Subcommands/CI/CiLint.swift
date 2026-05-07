@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import GitLab
-import Sandbox
+import ShellKit
 
 struct CiLint: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -32,11 +32,11 @@ struct CiLint: AsyncParsableCommand {
 
         let content: String
         if path == "-" {
-            content = String(decoding: FileHandle.standardInput.availableData,
+            content = String(decoding: await Shell.current.stdin.readAllData(),
                              as: UTF8.self)
         } else {
-            let url = Sandbox.resolve(path)
-            try await Sandbox.authorize(url)
+            let url = Shell.resolve(path)
+            try await Shell.authorize(url)
             content = try String(contentsOf: url, encoding: .utf8)
         }
 
@@ -46,12 +46,12 @@ struct CiLint: AsyncParsableCommand {
             body: Body(content: content))
 
         if result.valid {
-            print("OK — config is valid.")
-            for w in result.warnings { print("warning: \(w)") }
+            Shell.print("OK — config is valid.")
+            for w in result.warnings { Shell.print("warning: \(w)") }
             return
         }
-        for e in result.errors { print("error: \(e)") }
-        for w in result.warnings { print("warning: \(w)") }
+        for e in result.errors { Shell.print("error: \(e)") }
+        for w in result.warnings { Shell.print("warning: \(w)") }
         throw ExitCode(1)
     }
 }

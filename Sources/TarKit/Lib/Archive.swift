@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 // Selective imports — the libarchive wrapper module is named `Archive`
 // and exposes its own `enum Archive` which would collide with our
 // public type below.
@@ -44,8 +44,8 @@ public enum Archive {
     public static func extract(
         from url: URL, options: ExtractOptions
     ) async throws -> [Entry] {
-        try await Sandbox.authorize(url)
-        try await Sandbox.authorize(options.destination)
+        try await Shell.authorize(url)
+        try await Shell.authorize(options.destination)
         let reader = try newReader(at: url)
         return try extract(reader: reader, options: options)
     }
@@ -54,7 +54,7 @@ public enum Archive {
     public static func extract(
         from data: Data, options: ExtractOptions
     ) async throws -> [Entry] {
-        try await Sandbox.authorize(options.destination)
+        try await Shell.authorize(options.destination)
         let reader = try newReader(data: data)
         return try extract(reader: reader, options: options)
     }
@@ -165,9 +165,9 @@ public enum Archive {
         paths: [URL],
         options: CreateOptions = .init()
     ) async throws -> [Entry] {
-        try await Sandbox.authorize(url)
+        try await Shell.authorize(url)
         for input in paths {
-            try await Sandbox.authorize(input)
+            try await Shell.authorize(input)
         }
         let fm = FileManager.default
         if fm.fileExists(atPath: url.path) {

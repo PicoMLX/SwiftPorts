@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 import ForgeKit
@@ -52,11 +53,11 @@ struct SecretList: AsyncParsableCommand {
         let envelope: ActionsSecretList = try await client.get(
             secretsPath(repo: target, scope: scope))
         if envelope.secrets.isEmpty {
-            print("No \(scope) secrets in \(target.slug)."); return
+            Shell.print("No \(scope) secrets in \(target.slug)."); return
         }
         for s in envelope.secrets {
             let when = ISO8601DateFormatter().string(from: s.updatedAt)
-            print("\(s.name)\tupdated \(when)")
+            Shell.print("\(s.name)\tupdated \(when)")
         }
     }
 }
@@ -74,6 +75,6 @@ struct SecretDelete: AsyncParsableCommand {
         let target = try await RepositoryResolver.resolve(flag: repo)
         let client = try await CommandContext.apiClient()
         try await client.delete("\(secretsPath(repo: target, scope: scope))/\(name)")
-        print("\(ANSI.green("✓")) Deleted secret \(name)")
+        Shell.print("\(ANSI.green("✓")) Deleted secret \(name)")
     }
 }

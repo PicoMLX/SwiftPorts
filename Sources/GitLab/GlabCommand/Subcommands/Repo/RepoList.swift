@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -86,19 +87,19 @@ struct RepoList: AsyncParsableCommand {
         let projects: [Project] = try await client.get(path, query: query)
 
         if json {
-            print(try CodableOutput.prettyJSON(projects))
+            Shell.print(try CodableOutput.prettyJSON(projects))
             return
         }
         if projects.isEmpty {
-            print("No projects match.")
+            Shell.print("No projects match.")
             return
         }
         for p in projects {
             let archivedTag = (p.archived == true) ? "  " + ANSI.yellow("(archived)") : ""
             let branchTag = p.defaultBranch.map { "  " + ANSI.dim("[\($0)]") } ?? ""
-            print("#\(p.id)\t\(p.pathWithNamespace)\(branchTag)\(archivedTag)")
+            Shell.print("#\(p.id)\t\(p.pathWithNamespace)\(branchTag)\(archivedTag)")
             if let d = p.description, !d.isEmpty {
-                print("\t\(ANSI.dim(d))")
+                Shell.print("\t\(ANSI.dim(d))")
             }
         }
     }

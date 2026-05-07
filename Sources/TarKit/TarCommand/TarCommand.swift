@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import TarKit
-import Sandbox
+import ShellKit
 
 /// Pure-Swift port of `tar(1)`. Covers the common create / extract /
 /// list flows plus the `-z` gzip filter — enough for the typical
@@ -109,8 +109,8 @@ public struct TarCommand: AsyncParsableCommand {
         else if xz { compression = .xz }
         else if zstd { compression = .zstd }
         else { compression = .none }
-        let url = Sandbox.resolve(file)
-        let inputs = args.map { Sandbox.resolve($0) }
+        let url = Shell.resolve(file)
+        let inputs = args.map { Shell.resolve($0) }
         let opts = CreateOptions(
             compression: compression,
             recursive: true,
@@ -119,19 +119,19 @@ public struct TarCommand: AsyncParsableCommand {
             at: url, paths: inputs, options: opts)
         if verbose {
             for e in written {
-                FileHandle.standardError.write(
+                Shell.current.stderr.write(
                     Data("a \(e.path)\n".utf8))
             }
         }
     }
 
     private func runExtract(file: String) async throws {
-        let archiveURL = Sandbox.resolve(file)
+        let archiveURL = Shell.resolve(file)
         let dest: URL
         if let dir = changeDir {
-            dest = Sandbox.resolve(dir)
+            dest = Shell.resolve(dir)
         } else {
-            dest = Sandbox.currentDirectory
+            dest = Shell.currentDirectory
         }
         let opts = ExtractOptions(
             destination: dest,
@@ -141,15 +141,15 @@ public struct TarCommand: AsyncParsableCommand {
             from: archiveURL, options: opts)
         if verbose {
             for e in extracted {
-                FileHandle.standardError.write(
+                Shell.current.stderr.write(
                     Data("x \(e.path)\n".utf8))
             }
         }
     }
 
     private func runList(file: String) async throws {
-        let url = Sandbox.resolve(file)
-        try await Sandbox.authorize(url)
+        let url = Shell.resolve(file)
+        try await Shell.authorize(url)
         let entries = try await TarKit.Archive.list(at: url)
         for e in entries {
             if verbose {
@@ -164,9 +164,9 @@ public struct TarCommand: AsyncParsableCommand {
                 let dateStr = e.modificationDate.map {
                     Self.dateFormatter.string(from: $0)
                 } ?? "-"
-                print("\(kindChar)\(modeStr) \(sizeStr) \(dateStr) \(e.path)")
+                Shell.print("\(kindChar)\(modeStr) \(sizeStr) \(dateStr) \(e.path)")
             } else {
-                print(e.path)
+                Shell.print(e.path)
             }
         }
     }

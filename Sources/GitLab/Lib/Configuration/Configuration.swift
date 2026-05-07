@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 
 /// Static config for a GitLab API session: host, token, user agent.
 ///
@@ -26,7 +26,7 @@ public struct Configuration: Sendable {
     /// Build from the active sandbox's environment, or the real
     /// process environment when no sandbox is set.
     public static func live() -> Configuration {
-        fromEnvironment(Sandbox.environment)
+        fromEnvironment(Shell.current.environment.variables)
     }
 
     /// Test-friendly: build from a dict of env-style keys. Honours the

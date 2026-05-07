@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 import ForgeKit
@@ -78,13 +79,13 @@ struct IssueDevelop: AsyncParsableCommand {
         }
         let response: Response = try await gql.query(mutation, variables: variables)
         let createdName = response.createLinkedBranch.linkedBranch.ref.name
-        print("\(ANSI.green("✓")) Created branch \(createdName) linked to #\(number)")
+        Shell.print("\(ANSI.green("✓")) Created branch \(createdName) linked to #\(number)")
 
         if checkout {
             let git = CommandContext.gitClient()
             try await git.fetch(remote: "origin", refspec: createdName)
             try await git.checkout(ref: createdName)
-            print("\(ANSI.green("✓")) Checked out \(createdName)")
+            Shell.print("\(ANSI.green("✓")) Checked out \(createdName)")
         }
     }
 }

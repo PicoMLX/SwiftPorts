@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -37,7 +38,7 @@ struct CiCancel: AsyncParsableCommand {
             method: .post,
             path: "projects/\(target.encodedPath)/pipelines/\(id)/cancel",
             body: Empty())
-        print("Canceled #\(pipeline.id): \(CiSupport.renderStatus(pipeline.status))")
-        print(pipeline.webUrl.absoluteString)
+        Shell.print("Canceled #\(pipeline.id): \(CiSupport.renderStatus(pipeline.status))")
+        Shell.print(pipeline.webUrl.absoluteString)
     }
 }

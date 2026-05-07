@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -44,16 +45,16 @@ struct SearchCode: AsyncParsableCommand {
 
         if let json {
             let fields = try JSONFieldSelector.parse(raw: json, fieldMap: SearchFields.code)
-            print(try JSONFieldSelector.render(items: trimmed, fields: fields, fieldMap: SearchFields.code))
+            Shell.print(try JSONFieldSelector.render(items: trimmed, fields: fields, fieldMap: SearchFields.code))
             return
         }
         if trimmed.isEmpty {
-            print("No code matches.")
+            Shell.print("No code matches.")
             return
         }
-        print("Showing \(trimmed.count) of \(result.totalCount) results.")
+        Shell.print("Showing \(trimmed.count) of \(result.totalCount) results.")
         for item in trimmed {
-            print("\(item.repository.fullName)\t\(item.path)\t\(item.htmlUrl.absoluteString)")
+            Shell.print("\(item.repository.fullName)\t\(item.path)\t\(item.htmlUrl.absoluteString)")
         }
     }
 }

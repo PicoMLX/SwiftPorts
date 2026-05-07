@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -53,18 +54,18 @@ struct CiList: AsyncParsableCommand {
             "projects/\(target.encodedPath)/pipelines", query: query)
 
         if json {
-            print(try CodableOutput.prettyJSON(pipelines))
+            Shell.print(try CodableOutput.prettyJSON(pipelines))
             return
         }
         if pipelines.isEmpty {
-            print("No pipelines match.")
+            Shell.print("No pipelines match.")
             return
         }
         for p in pipelines {
             let age = CiSupport.ageInWords(from: p.createdAt)
             let refLabel = p.ref ?? "—"
             let sha = String(p.sha.prefix(8))
-            print("#\(p.id)\t\(CiSupport.renderStatus(p.status))\t\(refLabel)\t\(sha)\t\(age)")
+            Shell.print("#\(p.id)\t\(CiSupport.renderStatus(p.status))\t\(refLabel)\t\(sha)\t\(age)")
         }
     }
 }

@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -33,17 +34,17 @@ struct SearchIssuesBase {
 
         if let json {
             let fields = try JSONFieldSelector.parse(raw: json, fieldMap: SearchFields.issues)
-            print(try JSONFieldSelector.render(items: trimmed, fields: fields, fieldMap: SearchFields.issues))
+            Shell.print(try JSONFieldSelector.render(items: trimmed, fields: fields, fieldMap: SearchFields.issues))
             return
         }
         if trimmed.isEmpty {
-            print("No \(kind)s match.")
+            Shell.print("No \(kind)s match.")
             return
         }
-        print("Showing \(trimmed.count) of \(result.totalCount) results.")
+        Shell.print("Showing \(trimmed.count) of \(result.totalCount) results.")
         for item in trimmed {
             let repoSlug = item.repositoryUrl.lastTwoPathComponents
-            print("\(repoSlug)#\(item.number)\t\(item.state.rawValue)\t\(item.title)\t@\(item.user.login)")
+            Shell.print("\(repoSlug)#\(item.number)\t\(item.state.rawValue)\t\(item.title)\t@\(item.user.login)")
         }
     }
 }

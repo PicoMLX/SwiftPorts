@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 import libgit2
 
 /// Rich result returned by ``GitClient/commitDetailed(message:author:allowEmpty:)``.

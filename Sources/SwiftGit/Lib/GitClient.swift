@@ -1,6 +1,6 @@
 import Foundation
 import ForgeKit
-import Sandbox
+import ShellKit
 import libgit2
 
 /// In-process libgit2-backed implementation of
@@ -23,7 +23,7 @@ public struct GitClient: ForgeKit.GitClient {
     public let credentials: CredentialProvider?
 
     public init(
-        workingDirectory: URL = Sandbox.currentDirectory,
+        workingDirectory: URL = Shell.currentDirectory,
         credentials: CredentialProvider? = nil
     ) {
         Libgit2.ensureInitialized()
@@ -100,12 +100,12 @@ public struct GitClient: ForgeKit.GitClient {
         // libgit2's internal HTTP/SSH and packfile FS ops are below
         // this Swift boundary and are not gated by v1 — see #15
         // open-question § 5.6.
-        try await Sandbox.authorize(url)
+        try await Shell.authorize(url)
         let destURL = directory ?? defaultCloneDirectory(for: url)
-        try await Sandbox.authorize(destURL)
+        try await Shell.authorize(destURL)
         // Tier-2 (#18): apply env→option bridge before clone so the
         // freshly-init'd repo's config is loaded against the sandbox.
-        try Libgit2Sandboxing.shared.runIsolated(Sandbox.current) {
+        try Libgit2Sandboxing.shared.runIsolated(Shell.current.sandbox) {
             try cloneInner(url: url, dest: destURL.path)
         }
     }
@@ -442,12 +442,12 @@ public struct GitClient: ForgeKit.GitClient {
     // MARK: Internals
 
     internal func withRepository<T>(_ body: (OpaquePointer?) throws -> T) async throws -> T {
-        try await Sandbox.authorize(workingDirectory)
+        try await Shell.authorize(workingDirectory)
         // Tier-2 (#18): bridge sandbox env to libgit2's process-global
         // option block before opening the repo. The repo's frozen
         // config is then loaded against the sandbox's view, not the
         // host process env.
-        return try Libgit2Sandboxing.shared.runIsolated(Sandbox.current) {
+        return try Libgit2Sandboxing.shared.runIsolated(Shell.current.sandbox) {
             Libgit2.ensureInitialized()
             var repo: OpaquePointer?
             try check(git_repository_open_ext(&repo, workingDirectory.path, 0, nil))

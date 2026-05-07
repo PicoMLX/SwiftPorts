@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import GzipKit
-import Sandbox
+import ShellKit
 
 /// Shared engine for `gzip`, `gunzip`, and `zcat` — they're the same
 /// binary in upstream gzip, distinguished only by argv[0]. We model
@@ -187,11 +187,11 @@ enum GzipEngine {
                 try await processStdin(mode: mode)
                 continue
             }
-            let url = Sandbox.resolve(file)
+            let url = Shell.resolve(file)
             if stdout {
                 try await emitFileToStdout(url: url, mode: mode)
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> stdout\n".utf8))
                 }
             } else {
@@ -205,7 +205,7 @@ enum GzipEngine {
                         at: url, keepInput: keep, overwrite: force)
                 }
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> \(result.path)\n".utf8))
                 }
             }
@@ -213,23 +213,23 @@ enum GzipEngine {
     }
 
     private static func processStdin(mode: GzipMode) async throws {
-        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let input = await Shell.current.stdin.readAllData()
         let output: Data
         switch mode {
         case .compress:   output = try await GzipKit.Gzip.compress(input)
         case .decompress: output = try await GzipKit.Gzip.decompress(input)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 
     private static func emitFileToStdout(url: URL, mode: GzipMode) async throws {
-        try await Sandbox.authorize(url)
+        try await Shell.authorize(url)
         let bytes = try Data(contentsOf: url)
         let output: Data
         switch mode {
         case .compress:   output = try await GzipKit.Gzip.compress(bytes)
         case .decompress: output = try await GzipKit.Gzip.decompress(bytes)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 }

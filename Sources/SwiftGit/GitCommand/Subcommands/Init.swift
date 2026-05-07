@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Sandbox
+import ShellKit
 import SwiftGit
 
 struct GitInit: AsyncParsableCommand {
@@ -22,7 +22,7 @@ struct GitInit: AsyncParsableCommand {
     func run() async throws {
         let target: URL
         if let directory {
-            target = Sandbox.resolve(directory)
+            target = Shell.resolve(directory)
         } else {
             target = CommandContext.currentDirectory
         }
@@ -32,6 +32,6 @@ struct GitInit: AsyncParsableCommand {
         // Real git prints the absolute .git directory path. We mirror
         // the style: "Initialized empty Git repository in /path/.git/".
         let suffix = bare ? "" : "/.git/"
-        print("Initialized empty Git repository in \(dest.path)\(suffix)")
+        Shell.print("Initialized empty Git repository in \(dest.path)\(suffix)")
     }
 }

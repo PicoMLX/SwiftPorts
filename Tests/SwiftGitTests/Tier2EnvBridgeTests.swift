@@ -17,7 +17,7 @@
 import Foundation
 import Testing
 import libgit2
-import Sandbox
+import ShellKit
 @testable import SwiftGit
 
 @Suite("Tier-2 env→option bridge",
@@ -41,10 +41,13 @@ struct Tier2EnvBridgeTests {
         let hostName = readGlobalConfig("user.name")
         guard let hostName, !hostName.isEmpty else { return }
 
-        // No `environment:` argument — picks up the default from
-        // Sandbox+Factories.swift, which is just `["PWD": <root>]`.
+        // No environment override — Shell defaults give an empty
+        // env, which is exactly what this test wants (HOME unset
+        // forces libgit2's default-secure fallback to the sandbox's
+        // own homeDirectory).
         let sandbox = Sandbox.rooted(at: repoDir)
-        try await Sandbox.$current.withValue(sandbox) {
+        let shell = Shell(environment: Environment(), sandbox: sandbox)
+        try await shell.withCurrent {
             let client = SwiftGit.GitClient(workingDirectory: repoDir)
             _ = try await client.localBranches()
         }
@@ -92,11 +95,12 @@ struct Tier2EnvBridgeTests {
             at: scratchHome, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratchHome) }
 
-        let sandbox = Sandbox.rooted(
-            at: repoDir,
-            environment: { ["HOME": scratchHome.path] })
+        let sandbox = Sandbox.rooted(at: repoDir)
+        var env = Environment()
+        env.variables = ["HOME": scratchHome.path]
+        let shell = Shell(environment: env, sandbox: sandbox)
 
-        try await Sandbox.$current.withValue(sandbox) {
+        try await shell.withCurrent {
             // Drive a GitClient operation so the tier-2 hook runs
             // (Libgit2Sandboxing.runIsolated → setSearchPath(GLOBAL,
             // scratchHome) + setHomedir(scratchHome)).

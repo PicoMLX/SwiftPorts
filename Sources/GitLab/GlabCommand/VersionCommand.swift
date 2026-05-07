@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 
 struct VersionCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -7,6 +8,6 @@ struct VersionCommand: AsyncParsableCommand {
     )
 
     func run() async throws {
-        print("glab 0.1.0-dev (SwiftPorts)")
+        Shell.print("glab 0.1.0-dev (SwiftPorts)")
     }
 }

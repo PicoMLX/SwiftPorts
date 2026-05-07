@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -33,28 +34,28 @@ struct RepoView: AsyncParsableCommand {
 
         if web {
             try await Browser.open(project.webUrl)
-            print("Opening \(project.webUrl.absoluteString) in your browser.")
+            Shell.print("Opening \(project.webUrl.absoluteString) in your browser.")
             return
         }
         if json {
-            print(try CodableOutput.prettyJSON(project))
+            Shell.print(try CodableOutput.prettyJSON(project))
             return
         }
 
-        print("\(ANSI.bold(project.pathWithNamespace))  \(ANSI.dim("(#\(project.id))"))")
-        print("name: \(project.name)")
-        if let d = project.description, !d.isEmpty { print("description: \(d)") }
-        print("visibility: \(project.visibility)")
+        Shell.print("\(ANSI.bold(project.pathWithNamespace))  \(ANSI.dim("(#\(project.id))"))")
+        Shell.print("name: \(project.name)")
+        if let d = project.description, !d.isEmpty { Shell.print("description: \(d)") }
+        Shell.print("visibility: \(project.visibility)")
         if let archived = project.archived, archived {
-            print("\(ANSI.yellow("⚠")) archived")
+            Shell.print("\(ANSI.yellow("⚠")) archived")
         }
-        if let branch = project.defaultBranch { print("default branch: \(branch)") }
-        if let stars = project.starCount { print("stars: \(stars)") }
-        if let forks = project.forksCount { print("forks: \(forks)") }
-        if let open = project.openIssuesCount { print("open issues: \(open)") }
-        print("urls:")
-        print("  web:  \(project.webUrl.absoluteString)")
-        if let http = project.httpUrlToRepo { print("  http: \(http.absoluteString)") }
-        if let ssh = project.sshUrlToRepo { print("  ssh:  \(ssh.absoluteString)") }
+        if let branch = project.defaultBranch { Shell.print("default branch: \(branch)") }
+        if let stars = project.starCount { Shell.print("stars: \(stars)") }
+        if let forks = project.forksCount { Shell.print("forks: \(forks)") }
+        if let open = project.openIssuesCount { Shell.print("open issues: \(open)") }
+        Shell.print("urls:")
+        Shell.print("  web:  \(project.webUrl.absoluteString)")
+        if let http = project.httpUrlToRepo { Shell.print("  http: \(http.absoluteString)") }
+        if let ssh = project.sshUrlToRepo { Shell.print("  ssh:  \(ssh.absoluteString)") }
     }
 }

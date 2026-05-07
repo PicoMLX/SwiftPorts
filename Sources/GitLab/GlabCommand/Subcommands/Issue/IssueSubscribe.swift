@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -28,7 +29,7 @@ struct IssueSubscribe: AsyncParsableCommand {
         let client = try await CommandContext.apiClient(host: target.host)
         let path = "projects/\(target.encodedPath)/issues/\(parsed.iid)/subscribe"
         try await client.send(method: .post, path: path, body: EmptyBody())
-        print("Subscribed to #\(parsed.iid).")
+        Shell.print("Subscribed to #\(parsed.iid).")
     }
 }
 
@@ -58,6 +59,6 @@ struct IssueUnsubscribe: AsyncParsableCommand {
         let client = try await CommandContext.apiClient(host: target.host)
         let path = "projects/\(target.encodedPath)/issues/\(parsed.iid)/unsubscribe"
         try await client.send(method: .post, path: path, body: EmptyBody())
-        print("Unsubscribed from #\(parsed.iid).")
+        Shell.print("Unsubscribed from #\(parsed.iid).")
     }
 }

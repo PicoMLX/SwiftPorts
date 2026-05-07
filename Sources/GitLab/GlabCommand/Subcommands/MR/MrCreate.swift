@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -125,11 +126,11 @@ struct MrCreate: AsyncParsableCommand {
             body: request)
 
         if json {
-            print(try CodableOutput.prettyJSON(merge))
+            Shell.print(try CodableOutput.prettyJSON(merge))
             return
         }
-        print("Created !\(merge.iid): \(merge.title)")
-        print(merge.webUrl.absoluteString)
+        Shell.print("Created !\(merge.iid): \(merge.title)")
+        Shell.print(merge.webUrl.absoluteString)
     }
 }
 

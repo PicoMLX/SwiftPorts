@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -43,18 +44,18 @@ struct ReleaseList: AsyncParsableCommand {
             let contexts = trimmed.map {
                 ReleaseFields.Context(release: $0, latestTag: latestTag)
             }
-            print(try JSONFieldSelector.render(items: contexts, fields: fields, fieldMap: ReleaseFields.map))
+            Shell.print(try JSONFieldSelector.render(items: contexts, fields: fields, fieldMap: ReleaseFields.map))
             return
         }
 
         if trimmed.isEmpty {
-            print("No releases found in \(target.slug).")
+            Shell.print("No releases found in \(target.slug).")
             return
         }
         for r in trimmed {
             let label = r.draft ? "[draft]" : (r.prerelease ? "[pre]" : "       ")
             let when = r.publishedAt.map(ISO8601DateFormatter().string(from:)) ?? "-"
-            print("\(label)  \(r.tagName)\t\(r.name ?? "")\t\(when)")
+            Shell.print("\(label)  \(r.tagName)\t\(r.name ?? "")\t\(when)")
         }
     }
 

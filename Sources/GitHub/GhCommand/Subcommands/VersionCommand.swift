@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 
 struct VersionCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -7,7 +8,7 @@ struct VersionCommand: AsyncParsableCommand {
     )
 
     func run() async throws {
-        print("gh (SwiftGH port) 0.1.0-dev")
-        print("https://github.com/cocoanetics/SwiftGH")
+        Shell.print("gh (SwiftGH port) 0.1.0-dev")
+        Shell.print("https://github.com/cocoanetics/SwiftGH")
     }
 }

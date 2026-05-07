@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -62,7 +63,7 @@ struct VariableSet: AsyncParsableCommand {
 
         let resolved: String
         if value == "-" {
-            resolved = String(decoding: FileHandle.standardInput.availableData,
+            resolved = String(decoding: await Shell.current.stdin.readAllData(),
                               as: UTF8.self)
         } else {
             resolved = value
@@ -78,7 +79,7 @@ struct VariableSet: AsyncParsableCommand {
         do {
             let _: Variable = try await client.send(
                 method: .put, path: path, body: updateBody)
-            print("Updated \(key)")
+            Shell.print("Updated \(key)")
             return
         } catch {
             // Fall through to create.
@@ -92,6 +93,6 @@ struct VariableSet: AsyncParsableCommand {
             method: .post,
             path: "projects/\(target.encodedPath)/variables",
             body: createBody)
-        print("Created \(key)")
+        Shell.print("Created \(key)")
     }
 }

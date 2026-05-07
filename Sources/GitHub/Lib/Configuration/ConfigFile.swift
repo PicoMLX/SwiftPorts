@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 import Yams
 
 /// Parsed `~/.config/gh/config.yml`. Global preferences (no per-host
@@ -38,14 +38,14 @@ public struct ConfigFileStore: Sendable {
         // Steps 1 and 2 honor explicit env overrides; only fall
         // through to the platform home when both are unset.
         let dir: URL
-        if let xdg = Sandbox.env("XDG_CONFIG_HOME"), !xdg.isEmpty {
+        if let xdg = Shell.env("XDG_CONFIG_HOME"), !xdg.isEmpty {
             dir = URL(fileURLWithPath: xdg, isDirectory: true)
-        } else if let home = Sandbox.env("HOME"), !home.isEmpty {
+        } else if let home = Shell.env("HOME"), !home.isEmpty {
             dir = URL(fileURLWithPath: home, isDirectory: true)
                 .appendingPathComponent(".config", isDirectory: true)
         } else {
-            // Sandbox.homeDirectory handles iOS-availability internally.
-            dir = Sandbox.homeDirectory
+            // Shell.homeDirectory handles iOS-availability internally.
+            dir = Shell.homeDirectory
                 .appendingPathComponent(".config", isDirectory: true)
         }
         return dir

@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -31,6 +32,6 @@ struct IssueClose: AsyncParsableCommand {
         let path = "projects/\(target.encodedPath)/issues/\(parsed.iid)"
         let updated: Issue = try await client.send(
             method: .put, path: path, body: StateUpdate(stateEvent: "close"))
-        print("Closed #\(updated.iid): \(updated.title)")
+        Shell.print("Closed #\(updated.iid): \(updated.title)")
     }
 }

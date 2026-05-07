@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -60,13 +61,13 @@ struct MrMerge: AsyncParsableCommand {
             path: "projects/\(target.encodedPath)/merge_requests/\(iid)/merge",
             body: payload)
         if json {
-            print(try CodableOutput.prettyJSON(merged))
+            Shell.print(try CodableOutput.prettyJSON(merged))
             return
         }
-        print("Merged !\(merged.iid): \(merged.title)")
+        Shell.print("Merged !\(merged.iid): \(merged.title)")
         if let sha = merged.mergeCommitSha {
-            print("merge commit: \(sha)")
+            Shell.print("merge commit: \(sha)")
         }
-        print(merged.webUrl.absoluteString)
+        Shell.print(merged.webUrl.absoluteString)
     }
 }

@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -17,7 +18,7 @@ struct AuthToken: AsyncParsableCommand {
         guard let token = config.token, !token.isEmpty else {
             throw AuthTokenError.notLoggedIn(config.host)
         }
-        print(token)
+        Shell.print(token)
     }
 }
 

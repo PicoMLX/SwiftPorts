@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -27,16 +28,16 @@ struct LabelList: AsyncParsableCommand {
         let trimmed = Array(labels.prefix(limit))
 
         if json {
-            print(try CodableOutput.prettyJSON(trimmed))
+            Shell.print(try CodableOutput.prettyJSON(trimmed))
             return
         }
         if trimmed.isEmpty {
-            print("No labels in \(target.fullPath).")
+            Shell.print("No labels in \(target.fullPath).")
             return
         }
         for l in trimmed {
             let desc = l.description ?? ""
-            print("\(l.name)\t#\(l.color)\t\(desc)")
+            Shell.print("\(l.name)\t#\(l.color)\t\(desc)")
         }
     }
 }

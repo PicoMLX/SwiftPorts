@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -60,7 +61,7 @@ struct RepoList: AsyncParsableCommand {
                 nodes = response.viewer.repositories.nodes
             }
             let trimmedNodes = Array(nodes.prefix(limit))
-            print(try JSONFieldSelector.render(items: trimmedNodes, fields: fields, fieldMap: RepoFields.map))
+            Shell.print(try JSONFieldSelector.render(items: trimmedNodes, fields: fields, fieldMap: RepoFields.map))
             return
         }
 
@@ -83,14 +84,14 @@ struct RepoList: AsyncParsableCommand {
         let trimmed = Array(repos.prefix(limit))
 
         if trimmed.isEmpty {
-            print("No repositories.")
+            Shell.print("No repositories.")
             return
         }
         for r in trimmed {
             let visibility = r.visibility?.rawValue ?? (r.private ? "private" : "public")
             let lang = r.language ?? "—"
             let desc = r.description ?? ""
-            print("\(r.fullName)\t\(visibility)\t\(lang)\t\(desc)")
+            Shell.print("\(r.fullName)\t\(visibility)\t\(lang)\t\(desc)")
         }
     }
 }

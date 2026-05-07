@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -31,6 +32,6 @@ struct IssueReopen: AsyncParsableCommand {
         let path = "projects/\(target.encodedPath)/issues/\(parsed.iid)"
         let updated: Issue = try await client.send(
             method: .put, path: path, body: StateUpdate(stateEvent: "reopen"))
-        print("Reopened #\(updated.iid): \(updated.title)")
+        Shell.print("Reopened #\(updated.iid): \(updated.title)")
     }
 }

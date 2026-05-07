@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -15,6 +16,6 @@ struct AuthLogout: AsyncParsableCommand {
     func run() async throws {
         let resolver = ConfigurationResolver()
         try await resolver.remove(host: hostname)
-        print("✓ Removed stored token for \(hostname).")
+        Shell.print("✓ Removed stored token for \(hostname).")
     }
 }

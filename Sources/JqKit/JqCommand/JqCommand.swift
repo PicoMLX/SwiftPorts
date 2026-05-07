@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import JqKit
-import Sandbox
+import ShellKit
 
 /// `jq [OPTIONS] FILTER [FILE...]` — command-line JSON processor.
 ///
@@ -34,7 +34,11 @@ public struct Jq: AsyncParsableCommand {
     public init() {}
 
     public func run() async throws {
-        let exit = try await JqExecutable.run(argv: rawArgv)
+        let exit = try await JqExecutable.run(
+            argv: rawArgv,
+            stdin: Shell.current.stdin,
+            stdout: Shell.current.stdout,
+            stderr: Shell.current.stderr)
         if exit != 0 {
             throw ExitCode(exit)
         }
@@ -49,9 +53,9 @@ public struct Jq: AsyncParsableCommand {
 public enum JqExecutable {
 
     public static func run(argv: [String],
-                           stdin: FileHandle = .standardInput,
-                           stdout: FileHandle = .standardOutput,
-                           stderr: FileHandle = .standardError) async throws -> Int32 {
+                           stdin: InputSource,
+                           stdout: OutputSink,
+                           stderr: OutputSink) async throws -> Int32 {
         var raw = false
         var rawInput = false
         var compact = false
@@ -138,8 +142,8 @@ public enum JqExecutable {
                 let name = argv[i + 1]
                 let path = argv[i + 2]
                 do {
-                    let url = Sandbox.resolve(path)
-                    try await Sandbox.authorize(url)
+                    let url = Shell.resolve(path)
+                    try await Shell.authorize(url)
                     let data = try Data(contentsOf: url)
                     let text = String(decoding: data, as: UTF8.self)
                     if a == "--slurpfile" {
@@ -221,16 +225,16 @@ public enum JqExecutable {
         if nullInput {
             // no inputs
         } else if files.isEmpty || (files.count == 1 && files[0] == "-") {
-            inputContents.append(readStdinString(stdin))
+            inputContents.append((await readStdinString(stdin)))
         } else {
             for f in files {
                 if f == "-" {
-                    inputContents.append(readStdinString(stdin))
+                    inputContents.append((await readStdinString(stdin)))
                     continue
                 }
                 do {
-                    let url = Sandbox.resolve(f)
-                    try await Sandbox.authorize(url)
+                    let url = Shell.resolve(f)
+                    try await Shell.authorize(url)
                     let data = try Data(contentsOf: url)
                     inputContents.append(String(decoding: data, as: UTF8.self))
                 } catch {
@@ -281,10 +285,10 @@ public enum JqExecutable {
         }
 
         // jq's `env` / `$ENV` builtins read here. Going through
-        // Sandbox.environment means a sandboxed task feeds an
+        // Shell.current.environment.variables means a sandboxed task feeds an
         // empty (default-deny) env or the embedder-supplied env to
         // the filter — never leaking the host process's env.
-        let env = Sandbox.environment
+        let env = Shell.current.environment.variables
 
         var sharedVars: [String: JqValue] = [:]
         for (name, val) in namedArgs {
@@ -344,8 +348,7 @@ public enum JqExecutable {
 
     private enum ArgsMode { case none, args, jsonargs }
 
-    private static func readStdinString(_ handle: FileHandle) -> String {
-        let data = handle.readDataToEndOfFile()
-        return String(decoding: data, as: UTF8.self)
+    private static func readStdinString(_ source: InputSource) async -> String {
+        await source.readAllString()
     }
 }

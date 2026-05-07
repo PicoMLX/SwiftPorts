@@ -6,7 +6,7 @@
 import ArgumentParser
 import Foundation
 import ZstdKit
-import Sandbox
+import ShellKit
 
 public enum ZstdMode: Sendable {
     case compress
@@ -185,11 +185,11 @@ enum ZstdEngine {
                 try await processStdin(mode: mode)
                 continue
             }
-            let url = Sandbox.resolve(file)
+            let url = Shell.resolve(file)
             if stdout {
                 try await emitFileToStdout(url: url, mode: mode)
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> stdout\n".utf8))
                 }
             } else {
@@ -203,7 +203,7 @@ enum ZstdEngine {
                         at: url, keepInput: keep, overwrite: force)
                 }
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> \(result.path)\n".utf8))
                 }
             }
@@ -211,24 +211,24 @@ enum ZstdEngine {
     }
 
     private static func processStdin(mode: ZstdMode) async throws {
-        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let input = await Shell.current.stdin.readAllData()
         let output: Data
         switch mode {
         case .compress:   output = try await ZstdKit.Zstd.compress(input)
         case .decompress: output = try await ZstdKit.Zstd.decompress(input)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 
     private static func emitFileToStdout(url: URL, mode: ZstdMode) async throws {
-        try await Sandbox.authorize(url)
+        try await Shell.authorize(url)
         let bytes = try Data(contentsOf: url)
         let output: Data
         switch mode {
         case .compress:   output = try await ZstdKit.Zstd.compress(bytes)
         case .decompress: output = try await ZstdKit.Zstd.decompress(bytes)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 }
 

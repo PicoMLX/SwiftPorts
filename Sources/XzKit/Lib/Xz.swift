@@ -7,7 +7,7 @@
 #if canImport(Compression) || os(Linux) || os(Windows)
 
 import Foundation
-import Sandbox
+import ShellKit
 #if canImport(Compression)
 import Compression
 #else
@@ -215,8 +215,8 @@ public enum Xz {
         overwrite: Bool = false
     ) async throws -> URL {
         let target = destination ?? URL(fileURLWithPath: source.path + ".xz")
-        try await Sandbox.authorize(source)
-        try await Sandbox.authorize(target)
+        try await Shell.authorize(source)
+        try await Shell.authorize(target)
         if FileManager.default.fileExists(atPath: target.path) && !overwrite {
             throw XzKitError.compressionFailed(
                 "'\(target.path)' already exists; pass overwrite: true to replace")
@@ -243,8 +243,8 @@ public enum Xz {
         } else {
             target = try inferDecompressedName(from: source)
         }
-        try await Sandbox.authorize(source)
-        try await Sandbox.authorize(target)
+        try await Shell.authorize(source)
+        try await Shell.authorize(target)
         if FileManager.default.fileExists(atPath: target.path) && !overwrite {
             throw XzKitError.decompressionFailed(
                 "'\(target.path)' already exists; pass overwrite: true to replace")

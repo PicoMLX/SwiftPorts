@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import SwiftGit
 
@@ -43,12 +44,12 @@ struct CatFile: AsyncParsableCommand {
 
         if typeOnly {
             let meta = try await client.objectMetadata(of: object)
-            print(meta.kind.rawValue)
+            Shell.print(meta.kind.rawValue)
             return
         }
         if sizeOnly {
             let meta = try await client.objectMetadata(of: object)
-            print(meta.size)
+            Shell.print(meta.size)
             return
         }
         if pretty {
@@ -59,7 +60,7 @@ struct CatFile: AsyncParsableCommand {
             switch meta.kind {
             case .blob:
                 let data = try await client.catFileBlob(object)
-                FileHandle.standardOutput.write(data)
+                Shell.current.stdout.write(data)
             default:
                 throw CLIError.stderr(
                     "fatal: pretty-print for \(meta.kind.rawValue) objects is not yet supported",

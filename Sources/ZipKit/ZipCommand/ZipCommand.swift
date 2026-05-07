@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import ZipKit
-import Sandbox
+import ShellKit
 
 /// Pure-Swift port of Info-ZIP's `zip(1)`. Covers the most-used flags
 /// from `zip -h`. Adds (or replaces) entries in a PKZIP archive.
@@ -70,7 +70,7 @@ public struct ZipCommand: AsyncParsableCommand {
             throw ValidationError("Provide at least one file or directory to add.")
         }
 
-        let inputURLs = inputs.map { Sandbox.resolve($0) }
+        let inputURLs = inputs.map { Shell.resolve($0) }
         let options = CreateOptions(
             recursive: recursive,
             junkPaths: junkPaths,
@@ -81,7 +81,7 @@ public struct ZipCommand: AsyncParsableCommand {
             followSymlinks: !storeSymlinks,
             includeDirectories: !noDirEntries)
 
-        let outputURL = Sandbox.resolve(archive)
+        let outputURL = Shell.resolve(archive)
         let written = try await ZipKit.Archive.create(
             at: outputURL, paths: inputURLs, options: options)
 
@@ -95,7 +95,7 @@ public struct ZipCommand: AsyncParsableCommand {
                     action = e.compressionMethod == .store ?
                         " storing: " : "deflating: "
                 }
-                print("\(action)\(e.path)")
+                Shell.print("\(action)\(e.path)")
             }
         }
     }

@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -72,17 +73,17 @@ struct ProjectItemList: AsyncParsableCommand {
                 "items": trimmed.map { itemDict($0) },
                 "totalCount": connection.totalCount,
             ]
-            print(try ProjectJSONOutput.render(payload))
+            Shell.print(try ProjectJSONOutput.render(payload))
             return
         }
         if trimmed.isEmpty {
-            print("No items.")
+            Shell.print("No items.")
             return
         }
-        print("Showing \(trimmed.count) of \(connection.totalCount) items.")
+        Shell.print("Showing \(trimmed.count) of \(connection.totalCount) items.")
         for item in trimmed {
             let summary = describe(item)
-            print("\(item.type.rawValue)\t\(summary)")
+            Shell.print("\(item.type.rawValue)\t\(summary)")
         }
     }
 

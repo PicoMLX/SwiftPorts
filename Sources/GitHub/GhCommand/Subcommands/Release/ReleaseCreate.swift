@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -40,7 +41,7 @@ struct ReleaseCreate: AsyncParsableCommand {
         let target = try await RepositoryResolver.resolve(flag: repo)
         let notesValue: String?
         if notes == "-" {
-            let data = FileHandle.standardInput.readDataToEndOfFile()
+            let data = await Shell.current.stdin.readAllData()
             notesValue = String(data: data, encoding: .utf8)
         } else {
             notesValue = notes
@@ -60,7 +61,7 @@ struct ReleaseCreate: AsyncParsableCommand {
             path: "repos/\(target.slug)/releases",
             body: request)
 
-        print("Created release \(release.tagName)\(release.draft ? " (draft)" : "")")
-        print(release.htmlUrl.absoluteString)
+        Shell.print("Created release \(release.tagName)\(release.draft ? " (draft)" : "")")
+        Shell.print(release.htmlUrl.absoluteString)
     }
 }

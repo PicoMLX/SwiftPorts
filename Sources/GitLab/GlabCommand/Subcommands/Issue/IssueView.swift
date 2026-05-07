@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -43,7 +44,7 @@ struct IssueView: AsyncParsableCommand {
 
         if web {
             try await Browser.open(issue.webUrl)
-            print("Opening \(issue.webUrl.absoluteString) in your browser.")
+            Shell.print("Opening \(issue.webUrl.absoluteString) in your browser.")
             return
         }
 
@@ -58,10 +59,10 @@ struct IssueView: AsyncParsableCommand {
 
         if json {
             if let userNotes {
-                print(try CodableOutput.prettyJSON(
+                Shell.print(try CodableOutput.prettyJSON(
                     IssueWithComments(issue: issue, comments: userNotes)))
             } else {
-                print(try CodableOutput.prettyJSON(issue))
+                Shell.print(try CodableOutput.prettyJSON(issue))
             }
             return
         }
@@ -69,33 +70,33 @@ struct IssueView: AsyncParsableCommand {
         let stateLabel: String = issue.state == .opened
             ? ANSI.green("opened")
             : ANSI.red(issue.state.rawValue)
-        print("\(ANSI.bold("#\(issue.iid)"))  \(ANSI.bold(issue.title))")
+        Shell.print("\(ANSI.bold("#\(issue.iid)"))  \(ANSI.bold(issue.title))")
         let authorBit = issue.author.map { "@\($0.username)" } ?? "—"
-        print("state: \(stateLabel)  author: \(authorBit)")
+        Shell.print("state: \(stateLabel)  author: \(authorBit)")
         if let createdAt = issue.createdAt {
-            print("created: \(ISO8601DateFormatter().string(from: createdAt))")
+            Shell.print("created: \(ISO8601DateFormatter().string(from: createdAt))")
         }
         if !issue.labels.isEmpty {
-            print("labels: \(issue.labels.joined(separator: ", "))")
+            Shell.print("labels: \(issue.labels.joined(separator: ", "))")
         }
         if let milestone = issue.milestone {
-            print("milestone: \(milestone.title)")
+            Shell.print("milestone: \(milestone.title)")
         }
-        print("url: \(issue.webUrl.absoluteString)")
+        Shell.print("url: \(issue.webUrl.absoluteString)")
         if let body = issue.description, !body.isEmpty {
-            print("\n--\n\(body)")
+            Shell.print("\n--\n\(body)")
         }
 
         if let userNotes {
             guard !userNotes.isEmpty else {
-                print("\n(no comments)")
+                Shell.print("\n(no comments)")
                 return
             }
-            print("\n--- comments ---")
+            Shell.print("\n--- comments ---")
             for note in userNotes {
                 let when = note.createdAt.map(ISO8601DateFormatter().string(from:)) ?? "?"
-                print("\n@\(note.author.username)  \(ANSI.dim(when))")
-                print(note.body)
+                Shell.print("\n@\(note.author.username)  \(ANSI.dim(when))")
+                Shell.print(note.body)
             }
         }
     }
