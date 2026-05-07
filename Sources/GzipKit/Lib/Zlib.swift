@@ -202,6 +202,130 @@ public enum Zlib {
         return output
     }
 
+    // MARK: Synchronous variants
+    //
+    // Mirrors of `compress`/`decompress` without the `async` and
+    // without `Task.checkCancellation()` calls. Purpose-built for
+    // hosts that have to expose blocking compress/decompress —
+    // e.g. JavaScriptCore-backed JS runtimes implementing the
+    // Node `zlib.gzipSync` / `inflateSync` family, where the JS
+    // contract is "block the interpreter until done". Bodies are
+    // identical otherwise.
+
+    /// Synchronous counterpart of ``compress(_:wrap:level:)``. Same
+    /// semantics, no cancellation. Use when the caller is on a
+    /// thread that can't `await` (typically a JS-runtime sync hook).
+    public static func compressSync(
+        _ data: Data,
+        wrap: Wrap = .zlib,
+        level: Int32 = Z_DEFAULT_COMPRESSION
+    ) throws -> Data {
+        var stream = z_stream()
+        let initRC = deflateInit2_(
+            &stream,
+            level,
+            Z_DEFLATED,
+            wrap.deflateWindowBits,
+            8,
+            Z_DEFAULT_STRATEGY,
+            ZLIB_VERSION,
+            Int32(MemoryLayout<z_stream>.size))
+        guard initRC == Z_OK else {
+            throw ZlibError(kind: .compress, rc: initRC,
+                            message: streamMessage(&stream))
+        }
+        defer { deflateEnd(&stream) }
+
+        var output = Data()
+        var inputBytes = [UInt8](data)
+        let inputCount = inputBytes.count
+        var outputBuffer = [UInt8](repeating: 0, count: chunkSize)
+
+        try inputBytes.withUnsafeMutableBufferPointer { inPtr in
+            stream.next_in = inPtr.baseAddress
+            stream.avail_in = uInt(inputCount)
+
+            var done = false
+            while !done {
+                try outputBuffer.withUnsafeMutableBufferPointer { outPtr in
+                    stream.next_out = outPtr.baseAddress
+                    stream.avail_out = uInt(chunkSize)
+                    let r = deflate(&stream, Z_FINISH)
+                    let written = chunkSize - Int(stream.avail_out)
+                    if written > 0 {
+                        output.append(outPtr.baseAddress!, count: written)
+                    }
+                    switch r {
+                    case Z_STREAM_END: done = true
+                    case Z_OK, Z_BUF_ERROR: break
+                    default:
+                        throw ZlibError(
+                            kind: .compress, rc: r,
+                            message: streamMessage(&stream))
+                    }
+                }
+            }
+        }
+        return output
+    }
+
+    /// Synchronous counterpart of ``decompress(_:wrap:)``. Same
+    /// semantics, no cancellation. Use from sync-only hosts.
+    public static func decompressSync(
+        _ data: Data,
+        wrap: Wrap = .zlib
+    ) throws -> Data {
+        var stream = z_stream()
+        let initRC = inflateInit2_(
+            &stream,
+            wrap.inflateWindowBits,
+            ZLIB_VERSION,
+            Int32(MemoryLayout<z_stream>.size))
+        guard initRC == Z_OK else {
+            throw ZlibError(kind: .decompress, rc: initRC,
+                            message: streamMessage(&stream))
+        }
+        defer { inflateEnd(&stream) }
+
+        var output = Data()
+        var inputBytes = [UInt8](data)
+        let inputCount = inputBytes.count
+        var outputBuffer = [UInt8](repeating: 0, count: chunkSize)
+
+        try inputBytes.withUnsafeMutableBufferPointer { inPtr in
+            stream.next_in = inPtr.baseAddress
+            stream.avail_in = uInt(inputCount)
+
+            var done = false
+            while !done {
+                try outputBuffer.withUnsafeMutableBufferPointer { outPtr in
+                    stream.next_out = outPtr.baseAddress
+                    stream.avail_out = uInt(chunkSize)
+                    let r = inflate(&stream, Z_NO_FLUSH)
+                    let written = chunkSize - Int(stream.avail_out)
+                    if written > 0 {
+                        output.append(outPtr.baseAddress!, count: written)
+                    }
+                    switch r {
+                    case Z_STREAM_END:
+                        done = true
+                    case Z_OK:
+                        break
+                    case Z_BUF_ERROR:
+                        throw ZlibError(
+                            kind: .decompress, rc: Z_BUF_ERROR,
+                            message: "incomplete stream (truncated input)")
+                    default:
+                        throw ZlibError(
+                            kind: .decompress, rc: r,
+                            message: streamMessage(&stream))
+                    }
+                }
+            }
+        }
+        return output
+    }
+
     // MARK: Helpers
 
     /// Read the optional `stream.msg` C string, if zlib populated one.
