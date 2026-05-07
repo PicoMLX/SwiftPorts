@@ -191,6 +191,18 @@ public enum Zlib {
                         throw ZlibError(
                             kind: .decompress, rc: Z_BUF_ERROR,
                             message: "incomplete stream (truncated input)")
+                    case Z_NEED_DICT:
+                        // The input is a zlib stream that was
+                        // compressed with a preset dictionary; the
+                        // matching dictionary must be supplied via
+                        // `inflateSetDictionary` before decompression
+                        // can proceed. We don't expose a dictionary
+                        // parameter, so this is an error path here —
+                        // surface it with the matching Node-style code.
+                        throw ZlibError(
+                            kind: .decompress, rc: Z_NEED_DICT,
+                            message: "preset dictionary required " +
+                                     "but not supplied")
                     default:
                         throw ZlibError(
                             kind: .decompress, rc: r,
@@ -378,6 +390,7 @@ public struct ZlibError: Error, CustomStringConvertible, Sendable {
     /// etc. on the JS Error's `code` field.
     public var code: String {
         switch rc {
+        case Z_NEED_DICT:      return "Z_NEED_DICT"
         case Z_STREAM_ERROR:   return "Z_STREAM_ERROR"
         case Z_DATA_ERROR:     return "Z_DATA_ERROR"
         case Z_MEM_ERROR:      return "Z_MEM_ERROR"
