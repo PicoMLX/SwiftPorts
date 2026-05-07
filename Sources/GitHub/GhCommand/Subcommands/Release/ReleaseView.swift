@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -36,26 +37,26 @@ struct ReleaseView: AsyncParsableCommand {
                 latestTag = nil
             }
             let context = ReleaseFields.Context(release: release, latestTag: latestTag)
-            print(try JSONFieldSelector.render(item: context, fields: fields, fieldMap: ReleaseFields.map))
+            Shell.print(try JSONFieldSelector.render(item: context, fields: fields, fieldMap: ReleaseFields.map))
             return
         }
 
-        print("\(release.tagName)  \(release.name ?? "")")
+        Shell.print("\(release.tagName)  \(release.name ?? "")")
         if let when = release.publishedAt {
-            print("published: \(ISO8601DateFormatter().string(from: when))")
+            Shell.print("published: \(ISO8601DateFormatter().string(from: when))")
         }
-        print("author: @\(release.author.login)")
-        print("url: \(release.htmlUrl.absoluteString)")
+        Shell.print("author: @\(release.author.login)")
+        Shell.print("url: \(release.htmlUrl.absoluteString)")
         if !release.assets.isEmpty {
-            print("\nassets:")
+            Shell.print("\nassets:")
             for a in release.assets {
                 let size = ByteCountFormatter.string(
                     fromByteCount: a.size, countStyle: .file)
-                print("  \(a.name)  (\(size))  \(a.browserDownloadUrl.absoluteString)")
+                Shell.print("  \(a.name)  (\(size))  \(a.browserDownloadUrl.absoluteString)")
             }
         }
         if let body = release.body, !body.isEmpty {
-            print("\n--\n\(body)")
+            Shell.print("\n--\n\(body)")
         }
     }
 }

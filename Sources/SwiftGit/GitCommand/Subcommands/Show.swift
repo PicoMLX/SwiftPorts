@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import SwiftGit
 
@@ -27,7 +28,7 @@ struct Show: AsyncParsableCommand {
                 exitCode: 128)
         }
 
-        let stdout = FileHandle.standardOutput
+        let stdout = Shell.current.stdout
 
         // If the spec resolves directly to an annotated tag, emit the
         // tag block then fall through to its target commit.
@@ -48,7 +49,7 @@ struct Show: AsyncParsableCommand {
 
     /// One-commit `defaultFormat` block + unified diff against parent.
     private func showCommit(
-        sha: String, client: SwiftGit.GitClient, stdout: FileHandle
+        sha: String, client: SwiftGit.GitClient, stdout: OutputSink
     ) async throws {
         let entries = try await client.log(LogQuery(starts: [sha], maxCount: 1))
         guard let entry = entries.first else { return }

@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 import ForgeKit
@@ -28,6 +29,6 @@ struct PrUpdateBranch: AsyncParsableCommand {
             method: .put,
             path: "repos/\(target.slug)/pulls/\(number)/update-branch",
             body: Body(expectedHeadSha: expectedHeadSha))
-        print("\(ANSI.green("✓")) Update queued for PR #\(number)")
+        Shell.print("\(ANSI.green("✓")) Update queued for PR #\(number)")
     }
 }

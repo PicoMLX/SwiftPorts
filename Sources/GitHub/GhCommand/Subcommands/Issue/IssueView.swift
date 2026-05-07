@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 import ForgeKit
@@ -39,7 +40,7 @@ struct IssueView: AsyncParsableCommand {
             guard let issue = response.repository?.issue else {
                 throw ValidationError("No issue #\(number) on \(target.slug).")
             }
-            print(try JSONFieldSelector.render(item: issue, fields: fields, fieldMap: IssueFields.map))
+            Shell.print(try JSONFieldSelector.render(item: issue, fields: fields, fieldMap: IssueFields.map))
             return
         }
 
@@ -47,16 +48,16 @@ struct IssueView: AsyncParsableCommand {
         let issue: Issue = try await client.get(
             "repos/\(target.slug)/issues/\(number)")
 
-        print("\(ANSI.bold("#\(issue.number)"))  \(ANSI.bold(issue.title))")
+        Shell.print("\(ANSI.bold("#\(issue.number)"))  \(ANSI.bold(issue.title))")
         let stateColor: String = issue.state == .open ? ANSI.green("open") : ANSI.magenta("closed")
-        print("state: \(stateColor)  author: @\(issue.user.login)")
-        print("created: \(ISO8601DateFormatter().string(from: issue.createdAt))")
+        Shell.print("state: \(stateColor)  author: @\(issue.user.login)")
+        Shell.print("created: \(ISO8601DateFormatter().string(from: issue.createdAt))")
         if !issue.labels.isEmpty {
-            print("labels: \(issue.labels.map(\.name).joined(separator: ", "))")
+            Shell.print("labels: \(issue.labels.map(\.name).joined(separator: ", "))")
         }
-        print("url: \(issue.htmlUrl.absoluteString)")
+        Shell.print("url: \(issue.htmlUrl.absoluteString)")
         if let body = issue.body, !body.isEmpty {
-            print("\n--\n\(body)")
+            Shell.print("\n--\n\(body)")
         }
         if comments {
             try await renderComments(target: target, client: client)
@@ -68,15 +69,15 @@ struct IssueView: AsyncParsableCommand {
         let list: [IssueComment] = try await client.get(
             "repos/\(target.slug)/issues/\(number)/comments")
         guard !list.isEmpty else {
-            print("\n--\n(no comments)")
+            Shell.print("\n--\n(no comments)")
             return
         }
-        print("\n--\n\(ANSI.bold("Comments (\(list.count))"))")
+        Shell.print("\n--\n\(ANSI.bold("Comments (\(list.count))"))")
         let f = ISO8601DateFormatter()
         for comment in list {
-            print("\n@\(comment.user.login)  \(f.string(from: comment.createdAt))")
+            Shell.print("\n@\(comment.user.login)  \(f.string(from: comment.createdAt))")
             if let body = comment.body, !body.isEmpty {
-                print(body)
+                Shell.print(body)
             }
         }
     }

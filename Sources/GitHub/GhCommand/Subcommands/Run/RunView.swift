@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import HTTPTypes
 import GitHub
@@ -59,7 +60,7 @@ struct RunView: AsyncParsableCommand {
             // The single-job endpoint isn't a `gh` shape; pretty-print
             // is fine here since this is our own affordance.
             if json != nil {
-                print(try CodableOutput.prettyJSON(job))
+                Shell.print(try CodableOutput.prettyJSON(job))
                 return
             }
             renderJob(job)
@@ -89,7 +90,7 @@ struct RunView: AsyncParsableCommand {
             } else {
                 runWithJobs = RunWithJobs(run: run, jobs: [])
             }
-            print(try JSONFieldSelector.render(item: runWithJobs, fields: fields, fieldMap: RunViewFields.map))
+            Shell.print(try JSONFieldSelector.render(item: runWithJobs, fields: fields, fieldMap: RunViewFields.map))
             if exitStatus { try enforceExit(run.conclusion) }
             return
         }
@@ -99,8 +100,8 @@ struct RunView: AsyncParsableCommand {
         if jobs {
             let envelope: WorkflowJobList = try await client.get(
                 "repos/\(target.slug)/actions/runs/\(id)/jobs")
-            print("")
-            print(ANSI.bold("Jobs (\(envelope.jobs.count)):"))
+            Shell.print("")
+            Shell.print(ANSI.bold("Jobs (\(envelope.jobs.count)):"))
             for job in envelope.jobs {
                 let glyph = conclusionGlyph(job.conclusion ?? job.status)
                 let dur = job.startedAt.flatMap { start in
@@ -108,7 +109,7 @@ struct RunView: AsyncParsableCommand {
                         Self.formatDuration(end.timeIntervalSince(start))
                     }
                 } ?? "-"
-                print("  \(glyph) \(job.name)\t#\(job.id)\t\(dur)")
+                Shell.print("  \(glyph) \(job.name)\t#\(job.id)\t\(dur)")
             }
         }
 
@@ -118,36 +119,36 @@ struct RunView: AsyncParsableCommand {
     // MARK: Rendering
 
     private func renderRunSummary(_ run: WorkflowRun) {
-        print("\(ANSI.bold("Run #\(run.runNumber)")): \(run.displayTitle ?? run.name ?? "?")")
+        Shell.print("\(ANSI.bold("Run #\(run.runNumber)")): \(run.displayTitle ?? run.name ?? "?")")
         let status = run.conclusion ?? run.status ?? "-"
-        print("status: \(conclusionGlyph(status)) \(status)")
-        print("event: \(run.event)  branch: \(run.headBranch ?? "-")  sha: \(String(run.headSha.prefix(7)))")
-        if let actor = run.actor { print("actor: @\(actor.login)") }
+        Shell.print("status: \(conclusionGlyph(status)) \(status)")
+        Shell.print("event: \(run.event)  branch: \(run.headBranch ?? "-")  sha: \(String(run.headSha.prefix(7)))")
+        if let actor = run.actor { Shell.print("actor: @\(actor.login)") }
         if let started = run.runStartedAt {
-            print("started: \(ISO8601DateFormatter().string(from: started))")
+            Shell.print("started: \(ISO8601DateFormatter().string(from: started))")
         }
-        print("url: \(run.htmlUrl.absoluteString)")
+        Shell.print("url: \(run.htmlUrl.absoluteString)")
     }
 
     private func renderJob(_ job: WorkflowJob) {
         let status = job.conclusion ?? job.status
-        print("\(ANSI.bold("Job #\(job.id)")): \(job.name)")
-        print("status: \(conclusionGlyph(status)) \(status)")
+        Shell.print("\(ANSI.bold("Job #\(job.id)")): \(job.name)")
+        Shell.print("status: \(conclusionGlyph(status)) \(status)")
         if let workflow = job.workflowName {
-            print("workflow: \(workflow)")
+            Shell.print("workflow: \(workflow)")
         }
         if let started = job.startedAt, let ended = job.completedAt {
-            print("duration: \(Self.formatDuration(ended.timeIntervalSince(started)))")
+            Shell.print("duration: \(Self.formatDuration(ended.timeIntervalSince(started)))")
         }
         if let url = job.htmlUrl {
-            print("url: \(url.absoluteString)")
+            Shell.print("url: \(url.absoluteString)")
         }
         if let steps = job.steps, !steps.isEmpty {
-            print("")
-            print(ANSI.bold("Steps:"))
+            Shell.print("")
+            Shell.print(ANSI.bold("Steps:"))
             for step in steps {
                 let stepGlyph = conclusionGlyph(step.conclusion ?? step.status)
-                print("  \(stepGlyph) \(step.number). \(step.name)")
+                Shell.print("  \(stepGlyph) \(step.number). \(step.name)")
             }
         }
     }
@@ -182,7 +183,7 @@ struct RunView: AsyncParsableCommand {
         // redirects by default; the body we get back IS the zip.
         let response = try await client.raw(method: .get, path: path)
         guard !response.body.isEmpty else {
-            FileHandle.standardError.write(Data("No log archive returned (run still in progress?).\n".utf8))
+            Shell.current.stderr.write(Data("No log archive returned (run still in progress?).\n".utf8))
             return
         }
         try await ZipExtractor.printConcatenatedTextEntries(zipData: response.body)

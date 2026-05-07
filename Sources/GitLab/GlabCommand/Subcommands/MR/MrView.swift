@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -37,7 +38,7 @@ struct MrView: AsyncParsableCommand {
 
         if web {
             try await Browser.open(merge.webUrl)
-            print("Opening \(merge.webUrl.absoluteString) in your browser.")
+            Shell.print("Opening \(merge.webUrl.absoluteString) in your browser.")
             return
         }
 
@@ -50,54 +51,54 @@ struct MrView: AsyncParsableCommand {
 
         if json {
             if let userNotes {
-                print(try CodableOutput.prettyJSON(
+                Shell.print(try CodableOutput.prettyJSON(
                     MergeRequestWithComments(merge: merge, comments: userNotes)))
             } else {
-                print(try CodableOutput.prettyJSON(merge))
+                Shell.print(try CodableOutput.prettyJSON(merge))
             }
             return
         }
 
         let titleSuffix = (merge.draft == true || merge.workInProgress == true)
             ? "  " + ANSI.yellow("(draft)") : ""
-        print("\(ANSI.bold("!\(merge.iid)"))  \(ANSI.bold(merge.title))\(titleSuffix)")
+        Shell.print("\(ANSI.bold("!\(merge.iid)"))  \(ANSI.bold(merge.title))\(titleSuffix)")
         let stateLabel = MrSupport.renderState(merge.state)
         let authorBit = merge.author.map { "@\($0.username)" } ?? "—"
-        print("state: \(stateLabel)  author: \(authorBit)")
-        print("branches: \(merge.sourceBranch) → \(merge.targetBranch)")
+        Shell.print("state: \(stateLabel)  author: \(authorBit)")
+        Shell.print("branches: \(merge.sourceBranch) → \(merge.targetBranch)")
         if let createdAt = merge.createdAt {
-            print("created: \(ISO8601DateFormatter().string(from: createdAt))")
+            Shell.print("created: \(ISO8601DateFormatter().string(from: createdAt))")
         }
         if !merge.labels.isEmpty {
-            print("labels: \(merge.labels.joined(separator: ", "))")
+            Shell.print("labels: \(merge.labels.joined(separator: ", "))")
         }
         if let milestone = merge.milestone {
-            print("milestone: \(milestone.title)")
+            Shell.print("milestone: \(milestone.title)")
         }
         if let assignees = merge.assignees, !assignees.isEmpty {
-            print("assignees: \(assignees.map { "@\($0.username)" }.joined(separator: ", "))")
+            Shell.print("assignees: \(assignees.map { "@\($0.username)" }.joined(separator: ", "))")
         }
         if let reviewers = merge.reviewers, !reviewers.isEmpty {
-            print("reviewers: \(reviewers.map { "@\($0.username)" }.joined(separator: ", "))")
+            Shell.print("reviewers: \(reviewers.map { "@\($0.username)" }.joined(separator: ", "))")
         }
         if let detail = merge.detailedMergeStatus {
-            print("merge status: \(detail)")
+            Shell.print("merge status: \(detail)")
         }
-        print("url: \(merge.webUrl.absoluteString)")
+        Shell.print("url: \(merge.webUrl.absoluteString)")
         if let body = merge.description, !body.isEmpty {
-            print("\n--\n\(body)")
+            Shell.print("\n--\n\(body)")
         }
 
         if let userNotes {
             guard !userNotes.isEmpty else {
-                print("\n(no comments)")
+                Shell.print("\n(no comments)")
                 return
             }
-            print("\n--- comments ---")
+            Shell.print("\n--- comments ---")
             for note in userNotes {
                 let when = note.createdAt.map(ISO8601DateFormatter().string(from:)) ?? "?"
-                print("\n@\(note.author.username)  \(ANSI.dim(when))")
-                print(note.body)
+                Shell.print("\n@\(note.author.username)  \(ANSI.dim(when))")
+                Shell.print(note.body)
             }
         }
     }

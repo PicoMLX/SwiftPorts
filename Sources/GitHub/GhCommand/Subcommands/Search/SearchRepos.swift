@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -45,18 +46,18 @@ struct SearchRepos: AsyncParsableCommand {
 
         if let json {
             let fields = try JSONFieldSelector.parse(raw: json, fieldMap: SearchFields.repos)
-            print(try JSONFieldSelector.render(items: trimmed, fields: fields, fieldMap: SearchFields.repos))
+            Shell.print(try JSONFieldSelector.render(items: trimmed, fields: fields, fieldMap: SearchFields.repos))
             return
         }
         if trimmed.isEmpty {
-            print("No repositories found.")
+            Shell.print("No repositories found.")
             return
         }
-        print("Showing \(trimmed.count) of \(result.totalCount) results.")
+        Shell.print("Showing \(trimmed.count) of \(result.totalCount) results.")
         for r in trimmed {
             let lang = r.language ?? "—"
             let desc = r.description ?? ""
-            print("\(r.fullName)\t★\(r.stargazersCount)\t\(lang)\t\(desc)")
+            Shell.print("\(r.fullName)\t★\(r.stargazersCount)\t\(lang)\t\(desc)")
         }
     }
 }

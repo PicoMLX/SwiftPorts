@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -117,11 +118,11 @@ struct MrList: AsyncParsableCommand {
             "projects/\(target.encodedPath)/merge_requests", query: query)
 
         if json {
-            print(try CodableOutput.prettyJSON(mrs))
+            Shell.print(try CodableOutput.prettyJSON(mrs))
             return
         }
         if mrs.isEmpty {
-            print("No merge requests match.")
+            Shell.print("No merge requests match.")
             return
         }
         for mr in mrs {
@@ -129,7 +130,7 @@ struct MrList: AsyncParsableCommand {
             let labelChunk = mr.labels.isEmpty
                 ? ""
                 : "  " + ANSI.cyan("(\(mr.labels.joined(separator: ", ")))")
-            print("!\(mr.iid)\t\(stateLabel)\t\(mr.title)\t\(ANSI.dim("[\(mr.sourceBranch) → \(mr.targetBranch)]"))\(labelChunk)")
+            Shell.print("!\(mr.iid)\t\(stateLabel)\t\(mr.title)\t\(ANSI.dim("[\(mr.sourceBranch) → \(mr.targetBranch)]"))\(labelChunk)")
         }
     }
 }

@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -35,7 +36,7 @@ struct LabelList: AsyncParsableCommand {
                     "first": .int(min(limit, 100)),
                 ])
             let nodes = Array((response.repository?.labels.nodes ?? []).prefix(limit))
-            print(try JSONFieldSelector.render(items: nodes, fields: fields, fieldMap: LabelFields.list))
+            Shell.print(try JSONFieldSelector.render(items: nodes, fields: fields, fieldMap: LabelFields.list))
             return
         }
 
@@ -46,12 +47,12 @@ struct LabelList: AsyncParsableCommand {
         let trimmed = Array(labels.prefix(limit))
 
         if trimmed.isEmpty {
-            print("No labels in \(target.slug).")
+            Shell.print("No labels in \(target.slug).")
             return
         }
         for l in trimmed {
             let desc = l.description ?? ""
-            print("\(l.name)\t#\(l.color)\t\(desc)")
+            Shell.print("\(l.name)\t#\(l.color)\t\(desc)")
         }
     }
 }

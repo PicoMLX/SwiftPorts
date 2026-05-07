@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -53,8 +54,8 @@ struct CiRun: AsyncParsableCommand {
             method: .post,
             path: "projects/\(target.encodedPath)/pipeline",
             body: request)
-        print("Triggered #\(pipeline.id) on \(ref): \(CiSupport.renderStatus(pipeline.status))")
-        print(pipeline.webUrl.absoluteString)
+        Shell.print("Triggered #\(pipeline.id) on \(ref): \(CiSupport.renderStatus(pipeline.status))")
+        Shell.print(pipeline.webUrl.absoluteString)
     }
 }
 

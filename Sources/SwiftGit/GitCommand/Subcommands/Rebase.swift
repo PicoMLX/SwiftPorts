@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import SwiftGit
 
@@ -94,11 +95,11 @@ struct Rebase: AsyncParsableCommand {
     /// "Successfully rebased…" lands on the same visual row.
     static func emitProgress(current: Int, total: Int) {
         let line = "Rebasing (\(current)/\(total))\r"
-        FileHandle.standardError.write(Data(line.utf8))
+        Shell.current.stderr.write(Data(line.utf8))
     }
 
     static func printOutcome(_ outcome: RebaseOutcome) throws {
-        let stderr = FileHandle.standardError
+        let stderr = Shell.current.stderr
         switch outcome {
         case .alreadyUpToDate(let refName):
             // Real git: "Current branch <shorthand> is up to date." on

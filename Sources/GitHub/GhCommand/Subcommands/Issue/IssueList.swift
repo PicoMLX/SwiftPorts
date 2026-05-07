@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -51,7 +52,7 @@ struct IssueList: AsyncParsableCommand {
             let response: IssueListResponse = try await gql.query(
                 IssueQueries.list(), variables: variables)
             let issues = Array((response.repository?.issues.nodes ?? []).prefix(limit))
-            print(try JSONFieldSelector.render(items: issues, fields: fields, fieldMap: IssueFields.map))
+            Shell.print(try JSONFieldSelector.render(items: issues, fields: fields, fieldMap: IssueFields.map))
             return
         }
 
@@ -73,11 +74,11 @@ struct IssueList: AsyncParsableCommand {
         let trimmed = Array(onlyIssues.prefix(limit))
 
         if trimmed.isEmpty {
-            print("No issues match.")
+            Shell.print("No issues match.")
             return
         }
         for i in trimmed {
-            print("#\(i.number)\t\(i.state.rawValue)\t\(i.title)\t@\(i.user.login)")
+            Shell.print("#\(i.number)\t\(i.state.rawValue)\t\(i.title)\t@\(i.user.login)")
         }
     }
 

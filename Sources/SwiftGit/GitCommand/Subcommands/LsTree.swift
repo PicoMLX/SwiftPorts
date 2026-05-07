@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import SwiftGit
 
@@ -27,9 +28,9 @@ struct LsTree: AsyncParsableCommand {
             // `-r` (since you only want the leaf blobs); match that.
             if recursive && e.kind == .tree { continue }
             if nameOnly {
-                print(e.path)
+                Shell.print(e.path)
             } else {
-                print("\(e.mode) \(e.kind.rawValue) \(e.sha)\t\(e.path)")
+                Shell.print("\(e.mode) \(e.kind.rawValue) \(e.sha)\t\(e.path)")
             }
         }
     }

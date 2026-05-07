@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import HTTPTypes
 import GitHub
@@ -73,7 +74,7 @@ struct ApiCommand: AsyncParsableCommand {
     func run() async throws {
         let client = try await CommandContext.apiClient(host: hostname)
 
-        let body = try buildBody()
+        let body = try await buildBody()
         // When --input is set the user owns the body; -f/-F instead
         // become endpoint query-string params, per upstream gh.
         let query = inputFile != nil ? try buildQueryItems() : []
@@ -100,9 +101,9 @@ struct ApiCommand: AsyncParsableCommand {
         )
 
         if includeHeaders {
-            print("HTTP \(response.status)")
-            if let ct = response.contentType { print("Content-Type: \(ct)") }
-            print("")
+            Shell.print("HTTP \(response.status)")
+            if let ct = response.contentType { Shell.print("Content-Type: \(ct)") }
+            Shell.print("")
         }
 
         let isJSON = response.contentType?.contains("json") ?? false
@@ -110,7 +111,7 @@ struct ApiCommand: AsyncParsableCommand {
         if let filter = jqFilter, isJSON {
             do {
                 let lines = try Jq.evalString(filter: filter, on: response.body)
-                for line in lines { print(line) }
+                for line in lines { Shell.print(line) }
             } catch let e as JqError {
                 throw ValidationError("jq: \(e.message)")
             }
@@ -118,15 +119,15 @@ struct ApiCommand: AsyncParsableCommand {
         }
 
         if isJSON {
-            print(JSONPretty.string(from: response.body))
+            Shell.print(JSONPretty.string(from: response.body))
         } else {
-            print(String(data: response.body, encoding: .utf8) ?? "")
+            Shell.print(String(data: response.body, encoding: .utf8) ?? "")
         }
     }
 
-    private func buildBody() throws -> Data? {
+    private func buildBody() async throws -> Data? {
         if let inputFile {
-            return try Self.readInputFile(inputFile)
+            return try await Self.readInputFile(inputFile)
         }
         guard !fields.isEmpty || !rawFields.isEmpty else { return nil }
         var dict: [String: Any] = [:]
@@ -184,9 +185,9 @@ struct ApiCommand: AsyncParsableCommand {
     /// from standard input; any other value is a path. Mirrors upstream
     /// `gh api`'s `openUserFile` semantics: bytes go on the wire
     /// verbatim, with no parsing.
-    static func readInputFile(_ path: String) throws -> Data {
+    static func readInputFile(_ path: String) async throws -> Data {
         if path == "-" {
-            return FileHandle.standardInput.readDataToEndOfFile()
+            return await Shell.current.stdin.readAllData()
         }
         let url = URL(fileURLWithPath: path)
         do {

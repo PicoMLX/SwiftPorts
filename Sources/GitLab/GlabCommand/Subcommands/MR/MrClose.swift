@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -25,7 +26,7 @@ struct MrClose: AsyncParsableCommand {
             method: .put,
             path: "projects/\(target.encodedPath)/merge_requests/\(iid)",
             body: StateUpdate(stateEvent: "close"))
-        print("Closed !\(updated.iid): \(updated.title)")
+        Shell.print("Closed !\(updated.iid): \(updated.title)")
     }
 }
 
@@ -52,6 +53,6 @@ struct MrReopen: AsyncParsableCommand {
             method: .put,
             path: "projects/\(target.encodedPath)/merge_requests/\(iid)",
             body: StateUpdate(stateEvent: "reopen"))
-        print("Reopened !\(updated.iid): \(updated.title)")
+        Shell.print("Reopened !\(updated.iid): \(updated.title)")
     }
 }

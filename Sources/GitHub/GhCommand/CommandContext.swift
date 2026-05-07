@@ -1,7 +1,7 @@
 import Foundation
 import ForgeKit
 import GitHub
-import Sandbox
+import ShellKit
 import SwiftGit
 
 /// Per-process defaults for command runtime: a shared resolver, the
@@ -33,7 +33,7 @@ enum CommandContext {
     /// Returns the protocol-typed value so callers stay compatible
     /// with `NoGitClient` injection in tests / sandboxed embedders.
     static func gitClient(
-        workingDirectory: URL = Sandbox.currentDirectory
+        workingDirectory: URL = Shell.currentDirectory
     ) -> any ForgeKit.GitClient {
         SwiftGit.GitClient(
             workingDirectory: workingDirectory,

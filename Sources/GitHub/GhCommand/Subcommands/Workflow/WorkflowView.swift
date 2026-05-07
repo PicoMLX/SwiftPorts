@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -21,9 +22,9 @@ struct WorkflowView: AsyncParsableCommand {
         let workflow: Workflow = try await client.get(
             "repos/\(target.slug)/actions/workflows/\(workflow)")
 
-        print("\(workflow.name)  (#\(workflow.id))")
-        print("state: \(workflow.state.rawValue)")
-        print("path: \(workflow.path)")
-        print("url: \(workflow.htmlUrl.absoluteString)")
+        Shell.print("\(workflow.name)  (#\(workflow.id))")
+        Shell.print("state: \(workflow.state.rawValue)")
+        Shell.print("path: \(workflow.path)")
+        Shell.print("url: \(workflow.htmlUrl.absoluteString)")
     }
 }

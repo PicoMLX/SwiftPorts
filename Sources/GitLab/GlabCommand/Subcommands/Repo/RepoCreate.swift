@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -94,13 +95,13 @@ struct RepoCreate: AsyncParsableCommand {
             method: .post, path: "projects", body: request)
 
         if json {
-            print(try CodableOutput.prettyJSON(project))
+            Shell.print(try CodableOutput.prettyJSON(project))
             return
         }
-        print("\(ANSI.green("✓")) Created \(ANSI.bold(project.pathWithNamespace))")
-        print("  web:  \(project.webUrl.absoluteString)")
-        if let ssh = project.sshUrlToRepo { print("  ssh:  \(ssh.absoluteString)") }
-        if let http = project.httpUrlToRepo { print("  http: \(http.absoluteString)") }
+        Shell.print("\(ANSI.green("✓")) Created \(ANSI.bold(project.pathWithNamespace))")
+        Shell.print("  web:  \(project.webUrl.absoluteString)")
+        if let ssh = project.sshUrlToRepo { Shell.print("  ssh:  \(ssh.absoluteString)") }
+        if let http = project.httpUrlToRepo { Shell.print("  http: \(http.absoluteString)") }
     }
 
     static func lookupGroupId(client: APIClient, fullPath: String) async throws -> Int {

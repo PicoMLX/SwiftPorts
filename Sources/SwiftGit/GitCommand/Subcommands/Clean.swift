@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import SwiftGit
 
@@ -51,7 +52,7 @@ struct Clean: AsyncParsableCommand {
             }
             let abs = cwd.appendingPathComponent(entry.path)
             // Real git prints a per-file `Removing <path>` line.
-            print("Removing \(entry.path)")
+            Shell.print("Removing \(entry.path)")
             if !dryRun {
                 try? fm.removeItem(at: abs)
             }

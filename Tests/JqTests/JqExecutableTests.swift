@@ -1,35 +1,29 @@
 import Foundation
+import ShellKit
 import Testing
 @testable import JqCommand
 @testable import JqKit
 
 @Suite struct JqExecutableTests {
 
-    /// Drive the JqExecutable with a fake stdin and capture stdout/stderr.
+    /// Drive the JqExecutable with a fake stdin and capture stdout/stderr
+    /// through ShellKit's `OutputSink` / `InputSource`.
     private func run(_ argv: [String], input: String = "") async throws -> (stdout: String, stderr: String, exit: Int32) {
-        let inPipe = Pipe()
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-
-        if !input.isEmpty {
-            inPipe.fileHandleForWriting.write(Data(input.utf8))
-        }
-        try inPipe.fileHandleForWriting.close()
+        let stdinSource: InputSource = .string(input)
+        let stdoutSink = OutputSink()
+        let stderrSink = OutputSink()
 
         let exit = try await JqExecutable.run(
             argv: argv,
-            stdin: inPipe.fileHandleForReading,
-            stdout: outPipe.fileHandleForWriting,
-            stderr: errPipe.fileHandleForWriting)
+            stdin: stdinSource,
+            stdout: stdoutSink,
+            stderr: stderrSink)
 
-        try outPipe.fileHandleForWriting.close()
-        try errPipe.fileHandleForWriting.close()
-
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-        return (String(decoding: outData, as: UTF8.self),
-                String(decoding: errData, as: UTF8.self),
-                exit)
+        stdoutSink.finish()
+        stderrSink.finish()
+        let outString = await stdoutSink.readAllString()
+        let errString = await stderrSink.readAllString()
+        return (outString, errString, exit)
     }
 
     @Test func identity() async throws {

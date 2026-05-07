@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 import Testing
 @testable import GitHub
 
@@ -124,10 +124,11 @@ import Testing
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("xdg-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temp) }
-        let sandbox = Sandbox.rooted(
-            at: temp,
-            environment: { ["XDG_CONFIG_HOME": "/custom/xdg"] })
-        await Sandbox.$current.withValue(sandbox) {
+        let sandbox = Sandbox.rooted(at: temp)
+        var env = Environment()
+        env.variables = ["XDG_CONFIG_HOME": "/custom/xdg"]
+        let shell = Shell(environment: env, sandbox: sandbox)
+        try await shell.withCurrent {
             #expect(ConfigFileStore.defaultPath.path
                     == "/custom/xdg/gh/config.yml")
             #expect(HostsFileStore.defaultPath.path
@@ -139,10 +140,11 @@ import Testing
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("home-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temp) }
-        let sandbox = Sandbox.rooted(
-            at: temp,
-            environment: { ["HOME": "/custom/home"] })
-        await Sandbox.$current.withValue(sandbox) {
+        let sandbox = Sandbox.rooted(at: temp)
+        var env = Environment()
+        env.variables = ["HOME": "/custom/home"]
+        let shell = Shell(environment: env, sandbox: sandbox)
+        try await shell.withCurrent {
             #expect(ConfigFileStore.defaultPath.path
                     == "/custom/home/.config/gh/config.yml")
             #expect(HostsFileStore.defaultPath.path
@@ -154,10 +156,11 @@ import Testing
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent("both-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temp) }
-        let sandbox = Sandbox.rooted(
-            at: temp,
-            environment: { ["XDG_CONFIG_HOME": "/x", "HOME": "/h"] })
-        await Sandbox.$current.withValue(sandbox) {
+        let sandbox = Sandbox.rooted(at: temp)
+        var env = Environment()
+        env.variables = ["XDG_CONFIG_HOME": "/x", "HOME": "/h"]
+        let shell = Shell(environment: env, sandbox: sandbox)
+        try await shell.withCurrent {
             // XDG wins; HOME is ignored when XDG is set.
             #expect(ConfigFileStore.defaultPath.path == "/x/gh/config.yml")
             #expect(HostsFileStore.defaultPath.path == "/x/gh/hosts.yml")
@@ -169,9 +172,10 @@ import Testing
             .appendingPathComponent("none-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temp) }
         // Empty env — neither XDG nor HOME supplied.
-        let sandbox = Sandbox.rooted(at: temp, environment: { [:] })
-        await Sandbox.$current.withValue(sandbox) {
-            // Falls through to Sandbox.homeDirectory (the rooted
+        let sandbox = Sandbox.rooted(at: temp)
+        let shell = Shell(environment: Environment(), sandbox: sandbox)
+        try await shell.withCurrent {
+            // Falls through to Shell.homeDirectory (the rooted
             // sandbox places it at <root>/home).
             #expect(ConfigFileStore.defaultPath.path
                     == sandbox.homeDirectory.appendingPathComponent(
@@ -188,7 +192,7 @@ import Testing
     /// home). When `$HOME` isn't set on the host either, the
     /// platform default applies.
     @Test func defaultPathHonorsHostHOMEWhenNoSandbox() {
-        guard Sandbox.current == nil else {
+        guard Shell.current.sandbox == nil else {
             Issue.record("test requires no sandbox set"); return
         }
         if let home = ProcessInfo.processInfo.environment["HOME"], !home.isEmpty,

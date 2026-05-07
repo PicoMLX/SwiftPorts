@@ -19,19 +19,24 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftPorts",
+    // Platforms aligned with our largest direct Apple dependency,
+    // swift-archive (`.macOS(.v13), .iOS(.v15), .tvOS(.v15), .watchOS(.v10)`),
+    // and with downstream SwiftBash. Sites that legitimately need
+    // newer-OS API (`Synchronization.Mutex`,
+    // `swift-configuration`'s `ConfigReader`) gate locally with
+    // `@available` instead of forcing the package floor up.
     platforms: [
-        .macOS(.v15),
-        .iOS(.v18),
-        .tvOS(.v18),
-        .watchOS(.v11),
+        .macOS(.v13),
+        .iOS(.v16),
+        .tvOS(.v16),
+        .watchOS(.v9),
     ],
     products: [
-        // Sandbox — TaskLocal-driven path & URL gating for embedding.
-        // Zero dependencies beyond Foundation. Every library that
-        // touches URLs / env / argv depends on this.
-        .library(name: "Sandbox", targets: ["Sandbox"]),
-
         // ForgeKit — host-agnostic CLI plumbing (IO, Git, Secrets).
+        // The previous `Sandbox` product moved upstream to
+        // [ShellKit](https://github.com/Cocoanetics/ShellKit) — every
+        // library that virtualises URLs / env / argv now depends on
+        // ShellKit and reads through `Shell.current`.
         .library(name: "ForgeKit", targets: ["ForgeKit"]),
 
         // ZipKit umbrella — Info-ZIP family.
@@ -150,23 +155,22 @@ let package = Package(
         // back to upstream once the PR lands.
         .package(url: "https://github.com/odrobnik/libgit2",
                  branch: "windows-android-platforms"),
+
+        // ShellKit owns the virtualised shell-environment surface
+        // (IO sinks, Environment, Sandbox URL gate, NetworkConfig,
+        // ProcessTable, HostInfo, BinCatalog, the Command protocol,
+        // ParsableCommand bridge). SwiftPorts CLIs read/write through
+        // `Shell.current` so they participate in any host's pipeline
+        // (SwiftBash, swift-js, SwiftScript, …) without a fork.
+        // Pinned to `main` until ShellKit ships a tagged release.
+        .package(url: "https://github.com/Cocoanetics/ShellKit",
+                 branch: "main"),
     ],
     targets: [
-        // MARK: Sandbox (TaskLocal URL/env/argv gating)
-        .target(
-            name: "Sandbox",
-            path: "Sources/Sandbox",
-            exclude: ["AUDIT.md"]
-        ),
-        .testTarget(
-            name: "SandboxTests",
-            dependencies: ["Sandbox"]
-        ),
-
         // MARK: ForgeKit (host-agnostic plumbing)
         .target(
             name: "ForgeKit",
-            dependencies: ["Sandbox"],
+            dependencies: [.product(name: "ShellKit", package: "ShellKit")],
             path: "Sources/ForgeKit"
         ),
 
@@ -174,7 +178,7 @@ let package = Package(
         .target(
             name: "ZipKit",
             dependencies: [
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "Archive", package: "swift-archive"),
             ],
             path: "Sources/ZipKit/Lib"
@@ -183,7 +187,7 @@ let package = Package(
             name: "ZipCommand",
             dependencies: [
                 "ZipKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ZipKit/ZipCommand"
@@ -192,7 +196,7 @@ let package = Package(
             name: "UnzipCommand",
             dependencies: [
                 "ZipKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ZipKit/UnzipCommand"
@@ -229,7 +233,7 @@ let package = Package(
         .target(
             name: "TarKit",
             dependencies: [
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "Archive", package: "swift-archive"),
             ],
             path: "Sources/TarKit/Lib"
@@ -238,7 +242,7 @@ let package = Package(
             name: "TarCommand",
             dependencies: [
                 "TarKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/TarKit/TarCommand"
@@ -319,14 +323,14 @@ let package = Package(
         ),
         .target(
             name: "GzipKit",
-            dependencies: ["CZlib", "Sandbox"],
+            dependencies: ["CZlib", .product(name: "ShellKit", package: "ShellKit")],
             path: "Sources/GzipKit/Lib"
         ),
         .target(
             name: "GzipCommand",
             dependencies: [
                 "GzipKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/GzipKit/GzipCommand"
@@ -365,7 +369,7 @@ let package = Package(
         .target(
             name: "Bzip2Kit",
             dependencies: [
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .target(name: "CBzip2",
                         condition: .when(platforms: [.macOS, .linux, .windows])),
             ],
@@ -375,7 +379,7 @@ let package = Package(
             name: "Bzip2Command",
             dependencies: [
                 "Bzip2Kit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/Bzip2Kit/Bzip2Command"
@@ -414,7 +418,7 @@ let package = Package(
         .target(
             name: "XzKit",
             dependencies: [
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .target(name: "CLZMA",
                         condition: .when(platforms: [.linux, .windows])),
             ],
@@ -424,7 +428,7 @@ let package = Package(
             name: "XzCommand",
             dependencies: [
                 "XzKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/XzKit/XzCommand"
@@ -458,7 +462,7 @@ let package = Package(
         .target(
             name: "ZstdKit",
             dependencies: [
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .target(name: "CZstd",
                         condition: .when(platforms: [.macOS, .linux, .windows])),
             ],
@@ -468,7 +472,7 @@ let package = Package(
             name: "ZstdCommand",
             dependencies: [
                 "ZstdKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ZstdKit/ZstdCommand"
@@ -506,7 +510,7 @@ let package = Package(
         .target(
             name: "Lz4Kit",
             dependencies: [
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .target(name: "CLz4",
                         condition: .when(platforms: [.linux, .windows])),
             ],
@@ -516,7 +520,7 @@ let package = Package(
             name: "Lz4Command",
             dependencies: [
                 "Lz4Kit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/Lz4Kit/Lz4Command"
@@ -556,13 +560,16 @@ let package = Package(
         // invoked binary, matching how we treat the rest of our CLIs.
         .target(
             name: "JqKit",
+            dependencies: [
+                .product(name: "ShellKit", package: "ShellKit"),
+            ],
             path: "Sources/JqKit/Lib"
         ),
         .target(
             name: "JqCommand",
             dependencies: [
                 "JqKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/JqKit/JqCommand"
@@ -586,7 +593,7 @@ let package = Package(
             name: "GitHub",
             dependencies: [
                 "ForgeKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 "ZipKit",
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
@@ -604,7 +611,7 @@ let package = Package(
                 "ForgeKit",
                 "JqKit",
                 "Lz4Kit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 "SwiftGit",
                 "TarKit",
                 "XzKit",
@@ -621,7 +628,7 @@ let package = Package(
         .testTarget(
             name: "GitHubTests",
             dependencies: [
-                "GitHub", "GhCommand", "ForgeKit", "Sandbox",
+                "GitHub", "GhCommand", "ForgeKit", .product(name: "ShellKit", package: "ShellKit"),
                 "JqKit", "Lz4Kit", "TarKit", "XzKit", "ZipKit",
             ],
             resources: [
@@ -634,7 +641,7 @@ let package = Package(
             name: "GitLab",
             dependencies: [
                 "ForgeKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "HTTPTypesFoundation", package: "swift-http-types"),
@@ -647,7 +654,7 @@ let package = Package(
                 "GitLab",
                 "ForgeKit",
                 "JqKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 "SwiftGit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
@@ -684,7 +691,7 @@ let package = Package(
             dependencies: [
                 "CLibgit2Shim",
                 "ForgeKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "libgit2", package: "libgit2"),
                 // For `git archive` — libarchive's writer is the
                 // backend so the operation runs in-process and works
@@ -698,7 +705,7 @@ let package = Package(
             dependencies: [
                 "SwiftGit",
                 "ForgeKit",
-                "Sandbox",
+                .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "libgit2", package: "libgit2"),
             ],
@@ -706,7 +713,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "git",
-            dependencies: ["GitCommand", "Sandbox"],
+            dependencies: ["GitCommand", .product(name: "ShellKit", package: "ShellKit")],
             path: "Sources/SwiftGit/git"
         ),
         .testTarget(

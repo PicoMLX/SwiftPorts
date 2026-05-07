@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 import ForgeKit
@@ -23,10 +24,10 @@ struct AuthStatus: AsyncParsableCommand {
         let source = TokenSource.detect(
             configToken: config.token, hostsToken: hostsToken)
 
-        print("\(config.host)")
+        Shell.print("\(config.host)")
 
         guard let token = config.token else {
-            print("  \(ANSI.red("✗")) Not logged in. Run `gh auth login` or set GH_TOKEN.")
+            Shell.print("  \(ANSI.red("✗")) Not logged in. Run `gh auth login` or set GH_TOKEN.")
             throw ExitCode(1)
         }
 
@@ -35,24 +36,24 @@ struct AuthStatus: AsyncParsableCommand {
         let restClient = APIClient(configuration: config)
         do {
             let result: ViewerQuery = try await client.query(ViewerQuery.query)
-            print("  \(ANSI.green("✓")) Logged in to \(ANSI.bold(config.host)) as \(ANSI.bold(result.viewer.login)) \(ANSI.dim("(token from \(source.humanReadable))"))")
-            print("    URL: \(result.viewer.url.absoluteString)")
+            Shell.print("  \(ANSI.green("✓")) Logged in to \(ANSI.bold(config.host)) as \(ANSI.bold(result.viewer.login)) \(ANSI.dim("(token from \(source.humanReadable))"))")
+            Shell.print("    URL: \(result.viewer.url.absoluteString)")
             if let scopesResponse = try? await restClient.raw(method: .get, path: "user"),
                let scopes = scopesResponse.oauthScopes {
                 let label = scopes.isEmpty ? "(none)" : scopes.joined(separator: ", ")
-                print("    Token scopes: \(label)")
+                Shell.print("    Token scopes: \(label)")
             }
             if showToken {
-                print("    Token: \(token)")
+                Shell.print("    Token: \(token)")
             } else {
-                print("    Token: \(ANSI.dim(redact(token)))")
+                Shell.print("    Token: \(ANSI.dim(redact(token)))")
             }
         } catch let APIError.unauthenticated(url) {
-            print("  \(ANSI.red("✗")) Token rejected by \(url.absoluteString) (HTTP 401).")
-            print("    Source: \(source.humanReadable)")
+            Shell.print("  \(ANSI.red("✗")) Token rejected by \(url.absoluteString) (HTTP 401).")
+            Shell.print("    Source: \(source.humanReadable)")
             throw ExitCode(1)
         } catch {
-            print("  \(ANSI.red("✗")) Auth probe failed: \(error.localizedDescription)")
+            Shell.print("  \(ANSI.red("✗")) Auth probe failed: \(error.localizedDescription)")
             throw ExitCode(1)
         }
     }

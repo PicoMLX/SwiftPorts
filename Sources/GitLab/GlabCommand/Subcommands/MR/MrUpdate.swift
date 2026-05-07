@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitLab
 
@@ -134,11 +135,11 @@ struct MrUpdate: AsyncParsableCommand {
             body: request)
 
         if json {
-            print(try CodableOutput.prettyJSON(updated))
+            Shell.print(try CodableOutput.prettyJSON(updated))
             return
         }
-        print("Updated !\(updated.iid): \(updated.title)")
-        print(updated.webUrl.absoluteString)
+        Shell.print("Updated !\(updated.iid): \(updated.title)")
+        Shell.print(updated.webUrl.absoluteString)
     }
 }
 

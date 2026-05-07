@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Sandbox
+import ShellKit
 
 struct Clone: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -18,13 +18,13 @@ struct Clone: AsyncParsableCommand {
         guard let parsed = URL(string: url) else {
             throw CLIError.stderr("fatal: '\(url)' is not a valid URL", exitCode: 128)
         }
-        let dest = directory.map { Sandbox.resolve($0) }
+        let dest = directory.map { Shell.resolve($0) }
         let displayName = directory ?? defaultDirName(for: parsed)
 
         // Real git emits this header to stderr before the network work
         // starts; we follow the same convention so callers piping the
         // CLI to a log can grep it consistently.
-        let stderr = FileHandle.standardError
+        let stderr = Shell.current.stderr
         stderr.write(Data("Cloning into '\(displayName)'...\n".utf8))
 
         try await CommandContext.gitClient().clone(url: parsed, directory: dest)

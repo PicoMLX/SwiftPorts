@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import SwiftGit
 
@@ -28,13 +29,13 @@ struct RemoteCommand: AsyncParsableCommand {
         let client = CommandContext.gitClient()
         let names = try await client.remoteList()
         if !verbose {
-            for name in names { print(name) }
+            for name in names { Shell.print(name) }
             return
         }
         for name in names {
             if let url = try await client.remoteURL(named: name) {
-                print("\(name)\t\(url.absoluteString) (fetch)")
-                print("\(name)\t\(url.absoluteString) (push)")
+                Shell.print("\(name)\t\(url.absoluteString) (fetch)")
+                Shell.print("\(name)\t\(url.absoluteString) (push)")
             }
         }
     }

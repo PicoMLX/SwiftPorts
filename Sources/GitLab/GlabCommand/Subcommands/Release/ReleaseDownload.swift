@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Sandbox
+import ShellKit
 #if canImport(FoundationNetworking)
 import FoundationNetworking  // URLSession lives in a separate module on Linux
 #endif
@@ -68,8 +68,8 @@ struct ReleaseDownload: AsyncParsableCommand {
                 "No assets matched. Available: \(names.isEmpty ? "(none)" : names)")
         }
 
-        let destDir = Sandbox.resolve(directory)
-        try await Sandbox.authorize(destDir)
+        let destDir = Shell.resolve(directory)
+        try await Shell.authorize(destDir)
         try FileManager.default.createDirectory(
             at: destDir, withIntermediateDirectories: true)
 
@@ -79,9 +79,9 @@ struct ReleaseDownload: AsyncParsableCommand {
         let session = URLSession(configuration: .default)
         for asset in matching {
             let dest = destDir.appendingPathComponent(asset.name)
-            try await Sandbox.authorize(asset.url)
-            try await Sandbox.authorize(dest)
-            print("→ \(asset.name)")
+            try await Shell.authorize(asset.url)
+            try await Shell.authorize(dest)
+            Shell.print("→ \(asset.name)")
             let (data, _) = try await session.data(from: asset.url)
             try data.write(to: dest)
         }

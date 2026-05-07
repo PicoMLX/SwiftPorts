@@ -2,7 +2,7 @@ import Foundation
 import HTTPTypes
 import HTTPTypesFoundation
 import Logging
-import Sandbox
+import ShellKit
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -81,7 +81,7 @@ public actor GraphQLClient {
         }
 
         // Sandbox boundary for the GraphQL endpoint.
-        try await Sandbox.authorize(configuration.graphQLURL)
+        try await Shell.authorize(configuration.graphQLURL)
 
         logger.debug("GraphQL POST \(configuration.graphQLURL.absoluteString)")
 

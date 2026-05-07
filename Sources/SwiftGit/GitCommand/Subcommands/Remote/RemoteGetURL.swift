@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 
 struct RemoteGetURL: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -12,7 +13,7 @@ struct RemoteGetURL: AsyncParsableCommand {
     func run() async throws {
         let client = CommandContext.gitClient()
         if let url = try await client.remoteURL(named: name) {
-            print(url.absoluteString)
+            Shell.print(url.absoluteString)
             return
         }
         throw CLIError.stderr("error: No such remote '\(name)'", exitCode: 2)

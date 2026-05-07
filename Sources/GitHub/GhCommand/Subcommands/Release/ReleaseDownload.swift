@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Sandbox
+import ShellKit
 #if canImport(FoundationNetworking)
 import FoundationNetworking  // URLSession lives in a separate module on Linux
 #endif
@@ -68,8 +68,8 @@ struct ReleaseDownload: AsyncParsableCommand {
                 release.assets.map(\.name).joined(separator: ", "))
         }
 
-        let destDir = Sandbox.resolve(directory)
-        try await Sandbox.authorize(destDir)
+        let destDir = Shell.resolve(directory)
+        try await Shell.authorize(destDir)
         try FileManager.default.createDirectory(
             at: destDir, withIntermediateDirectories: true)
 
@@ -79,9 +79,9 @@ struct ReleaseDownload: AsyncParsableCommand {
         let session = URLSession(configuration: .default)
         for asset in matching {
             let dest = destDir.appendingPathComponent(asset.name)
-            print("→ \(asset.name) (\(ByteCountFormatter.string(fromByteCount: asset.size, countStyle: .file)))")
-            try await Sandbox.authorize(asset.browserDownloadUrl)
-            try await Sandbox.authorize(dest)
+            Shell.print("→ \(asset.name) (\(ByteCountFormatter.string(fromByteCount: asset.size, countStyle: .file)))")
+            try await Shell.authorize(asset.browserDownloadUrl)
+            try await Shell.authorize(dest)
             let (data, _) = try await session.data(from: asset.browserDownloadUrl)
             try data.write(to: dest)
 
@@ -93,7 +93,7 @@ struct ReleaseDownload: AsyncParsableCommand {
                     at: extractDir, withIntermediateDirectories: true)
                 try await ArchiveFormatDetector.extract(
                     archive: dest, format: format, into: extractDir)
-                print("  ↳ extracted into \(extractDir.lastPathComponent)/")
+                Shell.print("  ↳ extracted into \(extractDir.lastPathComponent)/")
                 if noKeepArchive {
                     try? FileManager.default.removeItem(at: dest)
                 }
@@ -227,7 +227,7 @@ enum ArchiveFormatDetector {
     }
 
     private static func makeStagingTarURL() -> URL {
-        Sandbox.temporaryDirectory
+        Shell.temporaryDirectory
             .appendingPathComponent("gh-release-\(UUID().uuidString).tar")
     }
 }

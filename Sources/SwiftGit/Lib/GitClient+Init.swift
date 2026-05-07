@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 import libgit2
 
 extension GitClient {
@@ -21,11 +21,11 @@ extension GitClient {
         initialBranch: String? = nil,
         reinit: Bool = false
     ) async throws -> URL {
-        try await Sandbox.authorize(workingDirectory)
+        try await Shell.authorize(workingDirectory)
         // Tier-2 (#18): apply env→option bridge before init so the
         // freshly-created repo's seeded config is loaded against the
         // sandbox's view, not the host's.
-        try Libgit2Sandboxing.shared.runIsolated(Sandbox.current) {
+        try Libgit2Sandboxing.shared.runIsolated(Shell.current.sandbox) {
             try initRepositoryInner(
                 bare: bare, initialBranch: initialBranch, reinit: reinit)
         }

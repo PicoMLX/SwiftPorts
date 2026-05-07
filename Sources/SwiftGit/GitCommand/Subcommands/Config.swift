@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import SwiftGit
 
@@ -47,7 +48,7 @@ struct Config: AsyncParsableCommand {
         if list {
             let entries = try await client.configList()
             for (name, value) in entries {
-                print("\(name)=\(value)")
+                Shell.print("\(name)=\(value)")
             }
             return
         }
@@ -66,7 +67,7 @@ struct Config: AsyncParsableCommand {
             // Read form: `git config <name>` or `git config --get <name>`.
             let name = args[0]
             if let value = try await client.configGet(name, scope: scope) {
-                print(value)
+                Shell.print(value)
             } else {
                 throw CLIError.stderr("", exitCode: 1)
             }

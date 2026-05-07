@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -41,10 +42,10 @@ struct RepoFork: AsyncParsableCommand {
             path: "projects/\(project.encodedPath)/fork",
             body: request)
         if json {
-            print(try CodableOutput.prettyJSON(fork))
+            Shell.print(try CodableOutput.prettyJSON(fork))
             return
         }
-        print("\(ANSI.green("✓")) Forked into \(ANSI.bold(fork.pathWithNamespace))")
-        print("  web:  \(fork.webUrl.absoluteString)")
+        Shell.print("\(ANSI.green("✓")) Forked into \(ANSI.bold(fork.pathWithNamespace))")
+        Shell.print("  web:  \(fork.webUrl.absoluteString)")
     }
 }

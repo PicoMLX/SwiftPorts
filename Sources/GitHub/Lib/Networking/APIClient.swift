@@ -2,7 +2,7 @@ import Foundation
 import HTTPTypes
 import HTTPTypesFoundation
 import Logging
-import Sandbox
+import ShellKit
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -155,7 +155,7 @@ public actor APIClient {
         // raw, paginate, plus the OAuthDeviceFlow + GraphQL clients
         // that go through this method) is gated here. ~60+ subcommand
         // call sites are subsumed by this single gate.
-        try await Sandbox.authorize(url)
+        try await Shell.authorize(url)
         var request = HTTPRequest(method: method, url: url)
         request.headerFields[.accept] = "application/vnd.github+json"
         request.headerFields[.gitHubAPIVersion] = "2022-11-28"

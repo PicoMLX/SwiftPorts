@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Sandbox
+import ShellKit
 import SwiftGit
 
 struct RevParse: AsyncParsableCommand {
@@ -34,7 +34,7 @@ struct RevParse: AsyncParsableCommand {
 
     func run() async throws {
         let client = CommandContext.gitClient()
-        let stdout = FileHandle.standardOutput
+        let stdout = Shell.current.stdout
 
         if isInsideWorkTree {
             let inside = (try? await client.isInsideWorkTree()) ?? false
@@ -91,7 +91,7 @@ struct RevParse: AsyncParsableCommand {
         let trimmed = path.hasSuffix("/") && path.count > 1
             ? String(path.dropLast())
             : path
-        let cwd = Sandbox.currentDirectory.path
+        let cwd = Shell.currentDirectory.path
         if trimmed == "\(cwd)/.git" { return ".git" }
         return trimmed
     }

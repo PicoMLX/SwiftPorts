@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 
 /// Open URLs in the user's default browser by shelling out to the
 /// platform's URL opener (`open` on macOS, `xdg-open` on Linux,
@@ -52,7 +52,7 @@ public enum Browser {
         // platform binaries like `/usr/bin/open` aren't under root
         // and will be denied — embedders running in a sandbox don't
         // get browser-launching capability.
-        try await Sandbox.authorize(executableURL)
+        try await Shell.authorize(executableURL)
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Int32, Error>) in
             do {
                 let process = Process()

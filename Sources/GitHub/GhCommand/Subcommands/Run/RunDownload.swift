@@ -2,7 +2,7 @@ import ArgumentParser
 import Foundation
 import GitHub
 import ForgeKit
-import Sandbox
+import ShellKit
 
 struct RunDownload: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -59,17 +59,17 @@ struct RunDownload: AsyncParsableCommand {
                 (available.isEmpty ? "(none)" : available))
         }
 
-        let destDir = Sandbox.resolve(directory)
-        try await Sandbox.authorize(destDir)
+        let destDir = Shell.resolve(directory)
+        try await Shell.authorize(destDir)
         try FileManager.default.createDirectory(
             at: destDir, withIntermediateDirectories: true)
 
         for artifact in matching where !artifact.expired {
             let dest = destDir.appendingPathComponent("\(artifact.name).zip")
-            try await Sandbox.authorize(dest)
+            try await Shell.authorize(dest)
             let size = ByteCountFormatter.string(
                 fromByteCount: artifact.sizeInBytes, countStyle: .file)
-            print("→ \(artifact.name).zip (\(size))")
+            Shell.print("→ \(artifact.name).zip (\(size))")
             // raw() returns the body bytes; URLSession follows the
             // 302 redirect to the signed S3 download URL by default.
             // The redirect target is below the Swift boundary —
@@ -82,11 +82,11 @@ struct RunDownload: AsyncParsableCommand {
         }
         let expired = matching.filter(\.expired)
         if !expired.isEmpty {
-            print(ANSI.dim(
+            Shell.print(ANSI.dim(
                 "Skipped \(expired.count) expired: " +
                 expired.map(\.name).joined(separator: ", ")))
         }
-        print("\(ANSI.green("✓")) Downloaded \(matching.count - expired.count) artifact(s) to \(destDir.path)")
+        Shell.print("\(ANSI.green("✓")) Downloaded \(matching.count - expired.count) artifact(s) to \(destDir.path)")
     }
 
     /// Same minimal `*` / `?` glob as `gh release download`.

@@ -120,7 +120,7 @@ import Testing
 
     // MARK: --input round-trip
 
-    @Test func inputFileReadsBytesVerbatimFromDisk() throws {
+    @Test func inputFileReadsBytesVerbatimFromDisk() async throws {
         // Round-trip parity check, mirroring the createCommitOnBranch
         // pattern from PR #19: a JSON body with a nested `input` object
         // goes through --input <file> and comes out byte-for-byte.
@@ -142,7 +142,7 @@ import Testing
         try body.data(using: .utf8)!.write(to: tmp)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
-        let read = try ApiCommand.readInputFile(tmp.path)
+        let read = try await ApiCommand.readInputFile(tmp.path)
         #expect(String(data: read, encoding: .utf8) == body)
 
         // The bytes must round-trip through JSONSerialization unchanged
@@ -156,9 +156,9 @@ import Testing
         #expect((input?["expectedHeadOid"] as? String) == "0000000000000000000000000000000000000000")
     }
 
-    @Test func inputFileMissingPathThrows() throws {
-        #expect(throws: (any Error).self) {
-            _ = try ApiCommand.readInputFile("/definitely/not/a/real/path-\(UUID().uuidString).json")
+    @Test func inputFileMissingPathThrows() async throws {
+        await #expect(throws: (any Error).self) {
+            _ = try await ApiCommand.readInputFile("/definitely/not/a/real/path-\(UUID().uuidString).json")
         }
     }
 

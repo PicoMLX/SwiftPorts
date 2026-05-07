@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -32,14 +33,14 @@ struct GistList: AsyncParsableCommand {
         let trimmed = Array(filtered.prefix(limit))
 
         if trimmed.isEmpty {
-            print("No gists found.")
+            Shell.print("No gists found.")
             return
         }
         for g in trimmed {
             let visibility = g.public ? "public" : "secret"
             let files = g.files.keys.sorted().joined(separator: ", ")
             let desc = g.description ?? ""
-            print("\(g.id)\t\(visibility)\t\(files)\t\(desc)")
+            Shell.print("\(g.id)\t\(visibility)\t\(files)\t\(desc)")
         }
     }
 }

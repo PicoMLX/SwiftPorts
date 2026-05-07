@@ -6,7 +6,7 @@
 import ArgumentParser
 import Foundation
 import XzKit
-import Sandbox
+import ShellKit
 
 public enum XzMode: Sendable {
     case compress
@@ -189,11 +189,11 @@ enum XzEngine {
                 try await processStdin(mode: mode)
                 continue
             }
-            let url = Sandbox.resolve(file)
+            let url = Shell.resolve(file)
             if stdout {
                 try await emitFileToStdout(url: url, mode: mode)
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> stdout\n".utf8))
                 }
             } else {
@@ -207,7 +207,7 @@ enum XzEngine {
                         at: url, keepInput: keep, overwrite: force)
                 }
                 if verbose {
-                    FileHandle.standardError.write(
+                    Shell.current.stderr.write(
                         Data("\(file) -> \(result.path)\n".utf8))
                 }
             }
@@ -215,24 +215,24 @@ enum XzEngine {
     }
 
     private static func processStdin(mode: XzMode) async throws {
-        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let input = await Shell.current.stdin.readAllData()
         let output: Data
         switch mode {
         case .compress:   output = try await XzKit.Xz.compress(input)
         case .decompress: output = try await XzKit.Xz.decompress(input)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 
     private static func emitFileToStdout(url: URL, mode: XzMode) async throws {
-        try await Sandbox.authorize(url)
+        try await Shell.authorize(url)
         let bytes = try Data(contentsOf: url)
         let output: Data
         switch mode {
         case .compress:   output = try await XzKit.Xz.compress(bytes)
         case .decompress: output = try await XzKit.Xz.decompress(bytes)
         }
-        FileHandle.standardOutput.write(output)
+        Shell.current.stdout.write(output)
     }
 }
 

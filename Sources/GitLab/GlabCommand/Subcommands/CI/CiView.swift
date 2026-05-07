@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import ForgeKit
 import GitLab
@@ -45,7 +46,7 @@ struct CiView: AsyncParsableCommand {
 
         if web {
             try await Browser.open(pipeline.webUrl)
-            print("Opening \(pipeline.webUrl.absoluteString) in your browser.")
+            Shell.print("Opening \(pipeline.webUrl.absoluteString) in your browser.")
             return
         }
 
@@ -58,7 +59,7 @@ struct CiView: AsyncParsableCommand {
                 let pipeline: Pipeline
                 let jobs: [Job]
             }
-            print(try CodableOutput.prettyJSON(
+            Shell.print(try CodableOutput.prettyJSON(
                 PipelineWithJobs(pipeline: pipeline, jobs: jobs)))
             return
         }
@@ -68,10 +69,10 @@ struct CiView: AsyncParsableCommand {
     }
 
     static func printPipelineHeader(_ p: Pipeline) {
-        print("\(ANSI.bold("#\(p.id)"))  \(CiSupport.renderStatus(p.status))")
-        print("ref: \(p.ref ?? "—")  sha: \(String(p.sha.prefix(8)))")
-        print("started: \(CiSupport.ageInWords(from: p.startedAt ?? p.createdAt))  duration: \(CiSupport.formatDuration(p.duration))")
-        print("url: \(p.webUrl.absoluteString)")
+        Shell.print("\(ANSI.bold("#\(p.id)"))  \(CiSupport.renderStatus(p.status))")
+        Shell.print("ref: \(p.ref ?? "—")  sha: \(String(p.sha.prefix(8)))")
+        Shell.print("started: \(CiSupport.ageInWords(from: p.startedAt ?? p.createdAt))  duration: \(CiSupport.formatDuration(p.duration))")
+        Shell.print("url: \(p.webUrl.absoluteString)")
     }
 
     static func printJobsByStage(_ jobs: [Job]) {
@@ -84,10 +85,10 @@ struct CiView: AsyncParsableCommand {
             byStage[j.stage, default: []].append(j)
         }
         for stage in stageOrder {
-            print("\n\(ANSI.bold("[\(stage)]"))")
+            Shell.print("\n\(ANSI.bold("[\(stage)]"))")
             for j in byStage[stage] ?? [] {
                 let dur = CiSupport.formatDuration(j.duration)
-                print("  \(CiSupport.renderStatus(j.status))  \(j.name) \(ANSI.dim("(#\(j.id), \(dur))"))")
+                Shell.print("  \(CiSupport.renderStatus(j.status))  \(j.name) \(ANSI.dim("(#\(j.id), \(dur))"))")
             }
         }
     }

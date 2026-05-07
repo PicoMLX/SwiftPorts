@@ -2,7 +2,7 @@ import ArgumentParser
 import Foundation
 import ForgeKit
 import GitLab
-import Sandbox
+import ShellKit
 
 struct RepoClone: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -33,12 +33,12 @@ struct RepoClone: AsyncParsableCommand {
             cloneURL = url
         }
 
-        let dest = directory.map { Sandbox.resolve($0) }
+        let dest = directory.map { Shell.resolve($0) }
         let git: any ForgeKit.GitClient = CommandContext.gitClient()
-        print("Cloning \(p.pathWithNamespace) from \(cloneURL.absoluteString)")
+        Shell.print("Cloning \(p.pathWithNamespace) from \(cloneURL.absoluteString)")
         try await git.clone(url: cloneURL, directory: dest)
         let where_ = directory ?? p.path
-        print("\(ANSI.green("✓")) Cloned into \(where_)")
+        Shell.print("\(ANSI.green("✓")) Cloned into \(where_)")
     }
 }
 

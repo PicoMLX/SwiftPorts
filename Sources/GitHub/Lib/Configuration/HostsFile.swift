@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 import Yams
 
 /// Parsed `~/.config/gh/hosts.yml`.
@@ -73,19 +73,19 @@ public struct HostsFileStore: Sendable {
         // Steps 1 and 2 honor explicit env overrides — important for
         // CI / wrapper scripts that set HOME=/tmp/... to keep gh
         // credentials out of the real user home. Inside a sandbox
-        // these come from `Sandbox.environment`; outside, from
+        // these come from `Shell.current.environment.variables`; outside, from
         // `ProcessInfo.processInfo.environment`. The platform-home
         // fallback is only used when both are unset.
         let configDir: URL
-        if let xdg = Sandbox.env("XDG_CONFIG_HOME"), !xdg.isEmpty {
+        if let xdg = Shell.env("XDG_CONFIG_HOME"), !xdg.isEmpty {
             configDir = URL(fileURLWithPath: xdg, isDirectory: true)
-        } else if let home = Sandbox.env("HOME"), !home.isEmpty {
+        } else if let home = Shell.env("HOME"), !home.isEmpty {
             configDir = URL(fileURLWithPath: home, isDirectory: true)
                 .appendingPathComponent(".config", isDirectory: true)
         } else {
-            // Sandbox.homeDirectory handles iOS-availability internally
+            // Shell.homeDirectory handles iOS-availability internally
             // (NSHomeDirectory on iOS, FileManager on macOS/Linux).
-            configDir = Sandbox.homeDirectory
+            configDir = Shell.homeDirectory
                 .appendingPathComponent(".config", isDirectory: true)
         }
         return configDir

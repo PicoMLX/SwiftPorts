@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Sandbox
+import ShellKit
 import SwiftGit
 
 struct Diff: AsyncParsableCommand {
@@ -135,7 +135,7 @@ struct Diff: AsyncParsableCommand {
         let output = try await client.diff(
             target, format: format, paths: paths, contextLines: context)
         if !output.isEmpty {
-            FileHandle.standardOutput.write(Data(output.utf8))
+            Shell.current.stdout.write(Data(output.utf8))
         }
     }
 
@@ -215,7 +215,7 @@ struct Diff: AsyncParsableCommand {
         if token.contains("/") || token.contains("*") || token.contains("?") {
             return true
         }
-        let resolved = Sandbox.currentDirectory
+        let resolved = Shell.currentDirectory
             .appendingPathComponent(token).path
         return FileManager.default.fileExists(atPath: resolved)
     }

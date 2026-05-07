@@ -1,6 +1,6 @@
 import Foundation
 import ForgeKit
-import Sandbox
+import ShellKit
 import SwiftGit
 
 /// Per-process defaults: builds a `SwiftGit.GitClient` rooted in the
@@ -10,7 +10,7 @@ enum CommandContext {
     /// Working directory used by every subcommand. Reads from the
     /// active sandbox's PWD when set, else process CWD.
     static var currentDirectory: URL {
-        Sandbox.currentDirectory
+        Shell.currentDirectory
     }
 
     /// libgit2-backed client with env-driven credential lookup.
@@ -30,20 +30,20 @@ enum CommandContext {
 
             switch url.host {
             case "github.com":
-                if let token = Sandbox.env("GH_TOKEN") ?? Sandbox.env("GITHUB_TOKEN"),
+                if let token = Shell.env("GH_TOKEN") ?? Shell.env("GITHUB_TOKEN"),
                    !token.isEmpty {
                     return .token(token)
                 }
             case "gitlab.com":
-                if let token = Sandbox.env("GITLAB_TOKEN"), !token.isEmpty {
+                if let token = Shell.env("GITLAB_TOKEN"), !token.isEmpty {
                     return .token(token, username: "oauth2")
                 }
             default:
                 break
             }
 
-            if let user = Sandbox.env("GIT_USERNAME"),
-               let pass = Sandbox.env("GIT_PASSWORD"),
+            if let user = Shell.env("GIT_USERNAME"),
+               let pass = Shell.env("GIT_PASSWORD"),
                !user.isEmpty, !pass.isEmpty {
                 return .userPassword(username: user, password: pass)
             }

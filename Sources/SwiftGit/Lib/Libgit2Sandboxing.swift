@@ -1,9 +1,9 @@
 import Foundation
-import Sandbox
+import ShellKit
 import CLibgit2Shim
 import libgit2
 
-/// Bridges `Sandbox.environment()` to libgit2's process-global option
+/// Bridges `Shell.current.environment.variables()` to libgit2's process-global option
 /// block. Keeps libgit2's own `getenv` calls inside its C internals
 /// from reading the host process env when a `Sandbox` is active.
 ///
@@ -98,7 +98,10 @@ internal final class Libgit2Sandboxing: @unchecked Sendable {
             return
         }
 
-        let env = sandbox.environment()
+        // Environment shadow now lives on `Shell`, not `Sandbox`.
+        // The TaskLocal `Shell.current` is what callers bind alongside
+        // their Sandbox; read variables through it.
+        let env = Shell.current.environment.variables
         let envHome = env["HOME"].flatMap { $0.isEmpty ? nil : $0 }
         let envXDG = env["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 }
 

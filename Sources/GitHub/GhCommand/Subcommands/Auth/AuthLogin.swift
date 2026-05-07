@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 import ForgeKit
@@ -56,7 +57,7 @@ struct AuthLogin: AsyncParsableCommand {
             let existing = try await CommandContext.resolveConfig(host: hostname)
             if existing.token != nil {
                 let source = TokenSource.detect(configToken: existing.token)
-                print("Already logged in to \(hostname) (token from \(source.humanReadable)). " +
+                Shell.print("Already logged in to \(hostname) (token from \(source.humanReadable)). " +
                       "Use --force to overwrite.")
                 throw ExitCode(0)
             }
@@ -64,7 +65,7 @@ struct AuthLogin: AsyncParsableCommand {
 
         let token: String
         if withToken {
-            token = try readTokenFromStdin()
+            token = try await readTokenFromStdin()
         } else {
             token = try await runDeviceFlow()
         }
@@ -74,15 +75,15 @@ struct AuthLogin: AsyncParsableCommand {
         let client = GraphQLClient(configuration: probeConfig)
         do {
             let result: ViewerQuery = try await client.query(ViewerQuery.query)
-            print("✓ Authenticated as \(result.viewer.login).")
+            Shell.print("✓ Authenticated as \(result.viewer.login).")
         } catch {
-            FileHandle.standardError.write(Data(
+            Shell.current.stderr.write(Data(
                 "Token validation failed: \(error.localizedDescription)\n".utf8))
             throw ExitCode(1)
         }
 
         try await resolver.store(token: token, host: hostname)
-        print("✓ Token saved to secret store for \(hostname).")
+        Shell.print("✓ Token saved to secret store for \(hostname).")
     }
 
     private func runDeviceFlow() async throws -> String {
@@ -90,39 +91,39 @@ struct AuthLogin: AsyncParsableCommand {
         let flow = OAuthDeviceFlow(clientID: clientID, host: hostname)
         let openInBrowser = self.openInBrowser
         let copyToClipboard = self.copyToClipboard
-        print("Starting device-code flow against \(hostname)…")
+        Shell.print("Starting device-code flow against \(hostname)…")
         let token = try await flow.authorize(scopes: scopes) { code in
-            print("")
+            Shell.print("")
             if copyToClipboard {
                 do {
                     try await Clipboard.write(code.userCode)
-                    print("! One-time code (\(ANSI.bold(code.userCode))) copied to clipboard.")
+                    Shell.print("! One-time code (\(ANSI.bold(code.userCode))) copied to clipboard.")
                 } catch {
-                    print("! \(ANSI.yellow("Couldn't copy to clipboard: \(error.localizedDescription)"))")
-                    print("! First copy your one-time code: \(ANSI.bold(code.userCode))")
+                    Shell.print("! \(ANSI.yellow("Couldn't copy to clipboard: \(error.localizedDescription)"))")
+                    Shell.print("! First copy your one-time code: \(ANSI.bold(code.userCode))")
                 }
             } else {
-                print("! First copy your one-time code: \(ANSI.bold(code.userCode))")
+                Shell.print("! First copy your one-time code: \(ANSI.bold(code.userCode))")
             }
             if openInBrowser {
-                print("! Opening \(code.verificationUri.absoluteString) in your browser…")
+                Shell.print("! Opening \(code.verificationUri.absoluteString) in your browser…")
                 do {
                     try await Browser.open(code.verificationUri)
                 } catch {
-                    print("! \(ANSI.yellow("Couldn't open the browser: \(error.localizedDescription)"))")
-                    print("! Open this URL in any browser: \(code.verificationUri.absoluteString)")
+                    Shell.print("! \(ANSI.yellow("Couldn't open the browser: \(error.localizedDescription)"))")
+                    Shell.print("! Open this URL in any browser: \(code.verificationUri.absoluteString)")
                 }
             } else {
-                print("! Open this URL in any browser: \(code.verificationUri.absoluteString)")
+                Shell.print("! Open this URL in any browser: \(code.verificationUri.absoluteString)")
             }
-            print("  (waiting for authorization; codes expire in \(code.expiresIn / 60) min)")
-            print("")
+            Shell.print("  (waiting for authorization; codes expire in \(code.expiresIn / 60) min)")
+            Shell.print("")
         }
         return token.accessToken
     }
 
-    private func readTokenFromStdin() throws -> String {
-        let data = FileHandle.standardInput.readDataToEndOfFile()
+    private func readTokenFromStdin() async throws -> String {
+        let data = await Shell.current.stdin.readAllData()
         let token = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !token.isEmpty else {

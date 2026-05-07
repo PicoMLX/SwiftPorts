@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 import ForgeKit
@@ -61,7 +62,7 @@ struct RepoEdit: AsyncParsableCommand {
             method: .patch,
             path: "repos/\(target.slug)",
             body: request)
-        print("\(ANSI.green("✓")) Edited \(updated.fullName)")
+        Shell.print("\(ANSI.green("✓")) Edited \(updated.fullName)")
     }
 
     private func triState(_ on: Bool, _ off: Bool) -> Bool? {

@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -53,8 +53,8 @@ public enum TTY {
     /// Honors `NO_COLOR` (kill switch), `CLICOLOR_FORCE` (force-on),
     /// and otherwise gates on stdout-is-a-TTY.
     public static var isStdoutColorEnabled: Bool {
-        if let v = Sandbox.env("NO_COLOR"), !v.isEmpty { return false }
-        if let v = Sandbox.env("CLICOLOR_FORCE"), !v.isEmpty, v != "0" { return true }
+        if let v = Shell.env("NO_COLOR"), !v.isEmpty { return false }
+        if let v = Shell.env("CLICOLOR_FORCE"), !v.isEmpty, v != "0" { return true }
         return isStdoutTTY
     }
 }

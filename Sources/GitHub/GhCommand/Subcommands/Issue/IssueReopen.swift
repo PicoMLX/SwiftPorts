@@ -1,4 +1,5 @@
 import ArgumentParser
+import ShellKit
 import Foundation
 import GitHub
 
@@ -22,6 +23,6 @@ struct IssueReopen: AsyncParsableCommand {
             method: .patch,
             path: "repos/\(target.slug)/issues/\(number)",
             body: IssueStateUpdateRequest.reopen())
-        print("✓ Reopened #\(issue.number)")
+        Shell.print("✓ Reopened #\(issue.number)")
     }
 }

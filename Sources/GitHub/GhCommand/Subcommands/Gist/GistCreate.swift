@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import GitHub
-import Sandbox
+import ShellKit
 
 struct GistCreate: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -35,7 +35,7 @@ struct GistCreate: AsyncParsableCommand {
         var contents: [String: GistFileContent] = [:]
 
         if files == ["-"] || (files.isEmpty && filename != nil) {
-            let data = FileHandle.standardInput.readDataToEndOfFile()
+            let data = await Shell.current.stdin.readAllData()
             let text = String(data: data, encoding: .utf8) ?? ""
             let name = filename ?? "stdin.txt"
             contents[name] = GistFileContent(content: text)
@@ -44,8 +44,8 @@ struct GistCreate: AsyncParsableCommand {
                 throw ValidationError("Provide at least one file path or pipe via -.")
             }
             for path in files {
-                let url = Sandbox.resolve(path)
-                try await Sandbox.authorize(url)
+                let url = Shell.resolve(path)
+                try await Shell.authorize(url)
                 let data = try Data(contentsOf: url)
                 let text = String(data: data, encoding: .utf8)
                     ?? String(data: data, encoding: .isoLatin1)
@@ -60,7 +60,7 @@ struct GistCreate: AsyncParsableCommand {
         let gist: Gist = try await client.send(
             method: .post, path: "gists", body: request)
         let visibility = gist.public ? "public" : "secret"
-        print("Created \(visibility) gist (\(gist.id))")
-        print(gist.htmlUrl.absoluteString)
+        Shell.print("Created \(visibility) gist (\(gist.id))")
+        Shell.print(gist.htmlUrl.absoluteString)
     }
 }

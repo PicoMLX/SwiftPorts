@@ -1,5 +1,5 @@
 import Foundation
-import Sandbox
+import ShellKit
 import libgit2
 
 // Selective imports — the libarchive wrapper module is named `Archive`
@@ -42,7 +42,7 @@ extension GitClient {
         to output: URL,
         prefix: String? = nil
     ) async throws {
-        try await Sandbox.authorize(output)
+        try await Shell.authorize(output)
         let walk = try await collectBlobEntries(
             treeish: treeish, prefix: normalizedPrefix(prefix))
         try writeArchive(
