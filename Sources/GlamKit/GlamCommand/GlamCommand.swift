@@ -1,9 +1,9 @@
 import ArgumentParser
 import Foundation
-import GamKit
+import GlamKit
 import ShellKit
 
-/// `gam [OPTIONS] [FILE...]` — render Markdown to ANSI.
+/// `glam [OPTIONS] [FILE...]` — render Markdown to ANSI.
 ///
 /// A pure-Swift port of the rendering side of charmbracelet/glamour.
 /// Output mirrors what `gh pr view`, `glab mr view`, and `glow` emit:
@@ -13,12 +13,12 @@ import ShellKit
 /// style when stdout isn't a terminal.
 ///
 /// Reads stdin when no file is given:
-///   `echo "# Hi" | gam`
-///   `gam README.md`
-///   `gam --style dark CHANGELOG.md`
-public struct Gam: AsyncParsableCommand {
+///   `echo "# Hi" | glam`
+///   `glam README.md`
+///   `glam --style dark CHANGELOG.md`
+public struct Glam: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "gam",
+        commandName: "glam",
         abstract: "Render Markdown to ANSI."
     )
 
@@ -41,7 +41,7 @@ public struct Gam: AsyncParsableCommand {
 
     public func run() async throws {
         let renderer = try Renderer(
-            style:    Gam.parseStyle(style),
+            style:    Glam.parseStyle(style),
             wordWrap: width,
             baseURL:  baseURL
         )
@@ -72,7 +72,7 @@ public struct Gam: AsyncParsableCommand {
     /// Parse the `-s/--style` flag. `auto` / `dark` / `light` /
     /// `notty` / `ascii` are bundled; anything else is treated as a
     /// path to a glamour-shaped JSON file.
-    static func parseStyle(_ raw: String) -> GamKit.Gam.Style {
+    static func parseStyle(_ raw: String) -> GlamKit.Glam.Style {
         switch raw.lowercased() {
         case "auto", "":     return .auto
         case "dark":         return .bundled(.dark)

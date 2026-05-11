@@ -1,5 +1,5 @@
 import Foundation
-import GamKit
+import GlamKit
 
 /// Tiny render helper used by `gh pr|issue|release view` to display
 /// the body of a remote item as ANSI-decorated Markdown.
@@ -12,7 +12,7 @@ import GamKit
 enum MarkdownBody {
     static func render(_ body: String) -> String {
         do {
-            return try Gam.render(body)
+            return try Glam.render(body)
         } catch {
             return body
         }

@@ -1,8 +1,8 @@
-import GamCommand
+import GlamCommand
 
 @main
 struct Entry {
     static func main() async {
-        await Gam.main()
+        await Glam.main()
     }
 }

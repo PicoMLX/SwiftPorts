@@ -1,7 +1,7 @@
 import Foundation
 import ShellKit
 import Testing
-@testable import GamKit
+@testable import GlamKit
 
 @Suite struct RendererTests {
 
@@ -81,7 +81,7 @@ import Testing
     @Test func autoStyleSurvivesBadGlamourStyleEnv() throws {
         let fakeShell = Shell(
             environment: Environment(
-                variables: ["GLAMOUR_STYLE": "/tmp/gam-missing-\(UUID().uuidString).json"]
+                variables: ["GLAMOUR_STYLE": "/tmp/glam-missing-\(UUID().uuidString).json"]
             )
         )
         try Shell.$current.withValue(fakeShell) {

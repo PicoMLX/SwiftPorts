@@ -7,15 +7,15 @@ import ShellKit
 /// Typical use:
 ///
 ///     // Auto-pick the bundled style based on terminal capability.
-///     print(try Gam.render(body))
+///     print(try Glam.render(body))
 ///
 ///     // Force one of the bundled styles.
-///     print(try Gam.render(body, style: .bundled(.dark)))
+///     print(try Glam.render(body, style: .bundled(.dark)))
 ///
 ///     // Render in a non-TTY pipeline.
-///     print(try Gam.render(body, style: .bundled(.notty)))
+///     print(try Glam.render(body, style: .bundled(.notty)))
 ///
-public enum Gam {
+public enum Glam {
 
     /// Style selector. `.auto` resolves at render time from the
     /// active terminal capability and `GLAMOUR_STYLE` env. The
@@ -59,7 +59,7 @@ public struct Renderer: Sendable {
     public let baseURL: String?
 
     public init(
-        style: Gam.Style = .auto,
+        style: Glam.Style = .auto,
         wordWrap: Int? = nil,
         baseURL: String? = nil,
         terminal override: Terminal? = nil
@@ -95,7 +95,7 @@ public struct Renderer: Sendable {
     // MARK: - Resolution
 
     private static func resolveStyle(
-        _ requested: Gam.Style,
+        _ requested: Glam.Style,
         terminal: Terminal
     ) throws -> StyleConfig {
         switch requested {

@@ -98,15 +98,15 @@ let package = Package(
         .library(name: "JqCommand", targets: ["JqCommand"]),
         .executable(name: "jq", targets: ["jq"]),
 
-        // GamKit umbrella — Glamour-compatible Markdown→ANSI renderer.
+        // GlamKit umbrella — Glamour-compatible Markdown→ANSI renderer.
         // Pure-Swift port of charmbracelet/glamour built on apple/swift-
         // markdown. Honors `GLAMOUR_STYLE`, terminal capability (TERM /
         // COLORTERM / NO_COLOR), and emits OSC 8 hyperlinks when the
         // terminal supports them. Used by GitHub / GitLab umbrellas to
         // render PR/issue/release bodies and comments.
-        .library(name: "GamKit", targets: ["GamKit"]),
-        .library(name: "GamCommand", targets: ["GamCommand"]),
-        .executable(name: "gam", targets: ["gam"]),
+        .library(name: "GlamKit", targets: ["GlamKit"]),
+        .library(name: "GlamCommand", targets: ["GlamCommand"]),
+        .executable(name: "glam", targets: ["glam"]),
 
         // GitHub umbrella — gh(1) port.
         .library(name: "GitHub", targets: ["GitHub"]),
@@ -177,7 +177,7 @@ let package = Package(
                  branch: "main"),
 
         // swift-markdown supplies the CommonMark + GFM AST used by
-        // GamKit. We picked it directly rather than going through
+        // GlamKit. We picked it directly rather than going through
         // Cocoanetics/SwiftText — SwiftText only re-exports it with
         // an HTML renderer (different output format than ours), and
         // we'd inherit its libxml2 / OCR / PDF trait surface for no
@@ -607,22 +607,22 @@ let package = Package(
             dependencies: ["JqCommand", "JqKit"]
         ),
 
-        // MARK: GamKit umbrella
+        // MARK: GlamKit umbrella
         // Markdown → ANSI renderer matching glamour's stylesheet model.
         // The library accepts a `GLAMOUR_STYLE`-shaped style JSON (same
         // schema as upstream), reads terminal capability through
-        // `ForgeKit.TTY` / `Gam.Terminal`, and emits an indented,
+        // `ForgeKit.TTY` / `Glam.Terminal`, and emits an indented,
         // word-wrapped, hyperlink-aware ANSI stream. Used by gh/glab
-        // for PR / issue / release body rendering and from the `gam`
+        // for PR / issue / release body rendering and from the `glam`
         // CLI for piped input.
         .target(
-            name: "GamKit",
+            name: "GlamKit",
             dependencies: [
                 "ForgeKit",
                 .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "Markdown", package: "swift-markdown"),
             ],
-            path: "Sources/GamKit/Lib",
+            path: "Sources/GlamKit/Lib",
             resources: [
                 // `.process` (not `.copy`) so the JSON files land at
                 // the bundle root rather than inside a `Resources/`
@@ -635,26 +635,26 @@ let package = Package(
             ]
         ),
         .target(
-            name: "GamCommand",
+            name: "GlamCommand",
             dependencies: [
-                "GamKit",
+                "GlamKit",
                 .product(name: "ShellKit", package: "ShellKit"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "Sources/GamKit/GamCommand"
+            path: "Sources/GlamKit/GlamCommand"
         ),
         .executableTarget(
-            name: "gam",
-            dependencies: ["GamCommand"],
-            path: "Sources/GamKit/gam"
+            name: "glam",
+            dependencies: ["GlamCommand"],
+            path: "Sources/GlamKit/glam"
         ),
         .testTarget(
-            name: "GamKitTests",
-            dependencies: ["GamKit"]
+            name: "GlamKitTests",
+            dependencies: ["GlamKit"]
         ),
         .testTarget(
-            name: "GamTests",
-            dependencies: ["GamCommand", "GamKit"]
+            name: "GlamTests",
+            dependencies: ["GlamCommand", "GlamKit"]
         ),
 
         // MARK: GitHub umbrella
@@ -676,7 +676,7 @@ let package = Package(
         .target(
             name: "GhCommand",
             dependencies: [
-                "GamKit",
+                "GlamKit",
                 "GitHub",
                 "ForgeKit",
                 "JqKit",
@@ -721,7 +721,7 @@ let package = Package(
         .target(
             name: "GlabCommand",
             dependencies: [
-                "GamKit",
+                "GlamKit",
                 "GitLab",
                 "ForgeKit",
                 "JqKit",

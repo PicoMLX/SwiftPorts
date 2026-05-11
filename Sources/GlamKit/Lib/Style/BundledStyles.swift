@@ -20,9 +20,9 @@ public enum BundledStyleError: Error, CustomStringConvertible, Sendable {
     public var description: String {
         switch self {
         case .resourceNotFound(let n):
-            return "GamKit: bundled style '\(n)' not found in module resources"
+            return "GlamKit: bundled style '\(n)' not found in module resources"
         case .decodeFailed(let n, let e):
-            return "GamKit: bundled style '\(n)' failed to decode: \(e)"
+            return "GlamKit: bundled style '\(n)' failed to decode: \(e)"
         }
     }
 }
