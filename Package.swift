@@ -98,6 +98,16 @@ let package = Package(
         .library(name: "JqCommand", targets: ["JqCommand"]),
         .executable(name: "jq", targets: ["jq"]),
 
+        // GamKit umbrella — Glamour-compatible Markdown→ANSI renderer.
+        // Pure-Swift port of charmbracelet/glamour built on apple/swift-
+        // markdown. Honors `GLAMOUR_STYLE`, terminal capability (TERM /
+        // COLORTERM / NO_COLOR), and emits OSC 8 hyperlinks when the
+        // terminal supports them. Used by GitHub / GitLab umbrellas to
+        // render PR/issue/release bodies and comments.
+        .library(name: "GamKit", targets: ["GamKit"]),
+        .library(name: "GamCommand", targets: ["GamCommand"]),
+        .executable(name: "gam", targets: ["gam"]),
+
         // GitHub umbrella — gh(1) port.
         .library(name: "GitHub", targets: ["GitHub"]),
         .library(name: "GhCommand", targets: ["GhCommand"]),
@@ -165,6 +175,15 @@ let package = Package(
         // Pinned to `main` until ShellKit ships a tagged release.
         .package(url: "https://github.com/Cocoanetics/ShellKit",
                  branch: "main"),
+
+        // swift-markdown supplies the CommonMark + GFM AST used by
+        // GamKit. We picked it directly rather than going through
+        // Cocoanetics/SwiftText — SwiftText only re-exports it with
+        // an HTML renderer (different output format than ours), and
+        // we'd inherit its libxml2 / OCR / PDF trait surface for no
+        // ANSI-side benefit.
+        .package(url: "https://github.com/swiftlang/swift-markdown",
+                 from: "0.7.0"),
     ],
     targets: [
         // MARK: ForgeKit (host-agnostic plumbing)
@@ -588,6 +607,49 @@ let package = Package(
             dependencies: ["JqCommand", "JqKit"]
         ),
 
+        // MARK: GamKit umbrella
+        // Markdown → ANSI renderer matching glamour's stylesheet model.
+        // The library accepts a `GLAMOUR_STYLE`-shaped style JSON (same
+        // schema as upstream), reads terminal capability through
+        // `ForgeKit.TTY` / `Gam.Terminal`, and emits an indented,
+        // word-wrapped, hyperlink-aware ANSI stream. Used by gh/glab
+        // for PR / issue / release body rendering and from the `gam`
+        // CLI for piped input.
+        .target(
+            name: "GamKit",
+            dependencies: [
+                "ForgeKit",
+                .product(name: "ShellKit", package: "ShellKit"),
+                .product(name: "Markdown", package: "swift-markdown"),
+            ],
+            path: "Sources/GamKit/Lib",
+            resources: [
+                .copy("Style/Resources"),
+            ]
+        ),
+        .target(
+            name: "GamCommand",
+            dependencies: [
+                "GamKit",
+                .product(name: "ShellKit", package: "ShellKit"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/GamKit/GamCommand"
+        ),
+        .executableTarget(
+            name: "gam",
+            dependencies: ["GamCommand"],
+            path: "Sources/GamKit/gam"
+        ),
+        .testTarget(
+            name: "GamKitTests",
+            dependencies: ["GamKit"]
+        ),
+        .testTarget(
+            name: "GamTests",
+            dependencies: ["GamCommand", "GamKit"]
+        ),
+
         // MARK: GitHub umbrella
         .target(
             name: "GitHub",
@@ -607,6 +669,7 @@ let package = Package(
         .target(
             name: "GhCommand",
             dependencies: [
+                "GamKit",
                 "GitHub",
                 "ForgeKit",
                 "JqKit",
@@ -651,6 +714,7 @@ let package = Package(
         .target(
             name: "GlabCommand",
             dependencies: [
+                "GamKit",
                 "GitLab",
                 "ForgeKit",
                 "JqKit",
