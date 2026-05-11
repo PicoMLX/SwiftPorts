@@ -446,14 +446,17 @@ final class ANSIRenderer {
     ) -> String {
         var parts: [String] = [centerSeparator]
         for col in 0..<widths.count {
-            // Standard GFM-ish separator: `:` ends if the column is
-            // center- or right-aligned, prefix `:` if center- or
-            // left-aligned. Same convention real markdown viewers
-            // use.
-            let align = alignments[col] ?? .left
+            // GFM separator: `:`-prefix marks left-aligned, suffix marks
+            // right-aligned, both marks center. The `nil` case (no
+            // explicit alignment) emits a plain dash run. Defaulting
+            // `nil` to `.left` here would conflate `|---|` with
+            // `|:---|` and drop the original alignment hint, which
+            // breaks round-tripping through downstream consumers that
+            // inspect the separator row.
+            let align = alignments[col]
             let dashCount = max(1, widths[col])
             let dashes = String(repeating: rowSeparator, count: dashCount)
-            let left  = (align == .center) ? ":" : rowSeparator
+            let left  = (align == .center || align == .left)  ? ":" : rowSeparator
             let right = (align == .center || align == .right) ? ":" : rowSeparator
             parts.append(left + dashes + right)
             parts.append(centerSeparator)

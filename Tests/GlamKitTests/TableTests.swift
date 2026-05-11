@@ -69,6 +69,39 @@ struct TableTests {
         #expect(out.contains("------:"))
     }
 
+    /// Regression for Codex P2 on PR #32 — explicit left alignment
+    /// (`|:---|`) must round-trip through the separator row with a
+    /// leading `:`. `nil` (no marker) and `.left` (explicit marker)
+    /// are distinct GFM tokens; the renderer must preserve the
+    /// difference so downstream consumers / regenerators don't
+    /// lose the source's intent.
+    @Test func leftAlignmentMarkerSurvives() throws {
+        let md = """
+        | A | B |
+        |:--|---|
+        | x | y |
+        """
+        let out = try render(md)
+        // Pull the separator row — it's the one with dashes.
+        let sepLine = out
+            .split(separator: "\n")
+            .map(String.init)
+            .first { $0.contains("---") || $0.contains(":-") }
+        #expect(sepLine != nil)
+        guard let line = sepLine else { return }
+        let slices = line.split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        // Left-aligned column (A): must START with `:` (not end with it).
+        #expect(slices.first?.hasPrefix(":") == true,
+                "expected left-aligned slice to start with `:`, got: \(slices)")
+        #expect(slices.first?.hasSuffix(":") == false,
+                "left-only must not gain a right-side `:`, got: \(slices)")
+        // Unspecified column (B): no `:` on either side.
+        #expect(slices.last?.contains(":") == false,
+                "expected no `:` in unspecified column slice, got: \(slices)")
+    }
+
     @Test func inlineFormattingInCells() throws {
         let md = """
         | code | link |
