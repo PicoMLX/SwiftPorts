@@ -1,4 +1,5 @@
 import Foundation
+import ShellKit
 import Testing
 @testable import GamKit
 
@@ -72,28 +73,31 @@ import Testing
     /// `GLAMOUR_STYLE` file must not abort rendering. The renderer
     /// should fall back to the terminal-derived default just like
     /// glamour's `RenderWithEnvironmentConfig` does.
+    ///
+    /// Uses ShellKit's TaskLocal `Shell.current` to inject a fake
+    /// `GLAMOUR_STYLE` rather than mutating the process env. That
+    /// keeps the test thread-safe and avoids libc `setenv` (which
+    /// isn't in scope on Windows under Swift 6.3).
     @Test func autoStyleSurvivesBadGlamourStyleEnv() throws {
-        let prior = ProcessInfo.processInfo.environment["GLAMOUR_STYLE"]
-        setenv("GLAMOUR_STYLE", "/tmp/gam-missing-\(UUID().uuidString).json", 1)
-        defer {
-            if let prior {
-                setenv("GLAMOUR_STYLE", prior, 1)
-            } else {
-                unsetenv("GLAMOUR_STYLE")
-            }
-        }
-        let renderer = try Renderer(
-            style: .auto,
-            terminal: Terminal(
-                colorEnabled: false,
-                trueColor: false,
-                eightBitColor: false,
-                hyperlinks: false,
-                background: .dark
+        let fakeShell = Shell(
+            environment: Environment(
+                variables: ["GLAMOUR_STYLE": "/tmp/gam-missing-\(UUID().uuidString).json"]
             )
         )
-        let out = try renderer.render("# Hi")
-        #expect(out.contains("# Hi"))
+        try Shell.$current.withValue(fakeShell) {
+            let renderer = try Renderer(
+                style: .auto,
+                terminal: Terminal(
+                    colorEnabled: false,
+                    trueColor: false,
+                    eightBitColor: false,
+                    hyperlinks: false,
+                    background: .dark
+                )
+            )
+            let out = try renderer.render("# Hi")
+            #expect(out.contains("# Hi"))
+        }
     }
 
     /// Regression for Codex review on PR #24 — `[/issues](/issues)`

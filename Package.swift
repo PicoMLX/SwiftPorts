@@ -624,7 +624,14 @@ let package = Package(
             ],
             path: "Sources/GamKit/Lib",
             resources: [
-                .copy("Style/Resources"),
+                // `.process` (not `.copy`) so the JSON files land at
+                // the bundle root rather than inside a `Resources/`
+                // subdirectory — that name is reserved in iOS
+                // framework bundles and trips the codesign step at
+                // CI time (`bundle format unrecognized`). Resource
+                // lookups via `Bundle.module.url(forResource:
+                // withExtension:)` still find them.
+                .process("Style/Resources"),
             ]
         ),
         .target(
