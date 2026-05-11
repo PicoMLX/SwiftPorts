@@ -71,14 +71,19 @@ struct RepoView: AsyncParsableCommand {
             Shell.print("topics: \(topics.joined(separator: ", "))")
         }
 
-        // README is rendered by default — that's what upstream `gh repo
-        // view` does, and what `gh repo view OWNER/REPO` users expect
-        // to see. A 404 (no README in the repo) is non-fatal — we just
-        // skip the section silently, matching upstream's behavior.
-        if let rendered = try? await Self.fetchAndRenderReadme(client: client, slug: target.slug),
-           !rendered.isEmpty {
-            Shell.print("")
-            Shell.print(rendered)
+        // README is rendered by default — that's what upstream `gh
+        // repo view` does. A 404 (no README in the repo) is the only
+        // error we silently swallow. Real failures — transport, auth,
+        // rate-limit, 5xx — are propagated up so the user sees them
+        // instead of getting a successful exit with a missing section.
+        do {
+            if let rendered = try await Self.fetchAndRenderReadme(client: client, slug: target.slug),
+               !rendered.isEmpty {
+                Shell.print("")
+                Shell.print(rendered)
+            }
+        } catch APIError.notFound {
+            // No README in this repo — silently skip, matches upstream.
         }
     }
 

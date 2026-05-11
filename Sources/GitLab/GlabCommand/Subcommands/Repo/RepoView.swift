@@ -70,28 +70,32 @@ struct RepoView: AsyncParsableCommand {
         if let http = project.httpUrlToRepo { Shell.print("  http: \(http.absoluteString)") }
         if let ssh = project.sshUrlToRepo { Shell.print("  ssh:  \(ssh.absoluteString)") }
 
-        // README is rendered by default — projects without a README
-        // produce nil (best-effort), in which case we silently skip
-        // the section. Matches upstream `gh repo view` / what users
-        // expect from `glab repo view OWNER/REPO`.
-        if let rendered = await Self.fetchAndRenderReadme(
-            client: client, target: target, project: project),
-           !rendered.isEmpty {
-            Shell.print("")
-            Shell.print(rendered)
+        // README is rendered by default — same shape as `gh repo
+        // view`. Only `.notFound` is silently swallowed; transport
+        // / auth / rate-limit / 5xx errors propagate so users see
+        // them instead of getting partial output with no warning.
+        do {
+            if let rendered = try await Self.fetchAndRenderReadme(
+                client: client, target: target, project: project),
+               !rendered.isEmpty {
+                Shell.print("")
+                Shell.print(rendered)
+            }
+        } catch APIError.notFound {
+            // No README in this project — silently skip.
         }
     }
 
     /// Fetch and render the project's README via the GitLab files
     /// API. Probes a small set of common filenames on the project's
-    /// default branch. Returns `nil` when none of the candidates
-    /// resolves — absence is non-fatal, matching the way upstream
-    /// `gh repo view` treats a missing README.
+    /// default branch. Returns `nil` only when *every* candidate
+    /// reports `notFound`; any other error (transport, auth, rate-
+    /// limit, 5xx, decoding) propagates so the caller can surface it.
     private static func fetchAndRenderReadme(
         client: APIClient,
         target: RepositoryReference,
         project: Project
-    ) async -> String? {
+    ) async throws -> String? {
         let branch = project.defaultBranch ?? "main"
         let candidates = ["README.md", "README", "README.rst", "README.txt", "readme.md"]
         for name in candidates {
@@ -99,9 +103,13 @@ struct RepoView: AsyncParsableCommand {
                 withAllowedCharacters: .urlPathAllowed) ?? name
             let path = "projects/\(target.encodedPath)/repository/files/\(encoded)"
             let query = [URLQueryItem(name: "ref", value: branch)]
-            if let file = try? await client.get(path, query: query) as RepositoryFile,
-               let text = file.decodedContent(), !text.isEmpty {
-                return Glam.renderBody(text)
+            do {
+                let file: RepositoryFile = try await client.get(path, query: query)
+                if let text = file.decodedContent(), !text.isEmpty {
+                    return Glam.renderBody(text)
+                }
+            } catch APIError.notFound {
+                continue
             }
         }
         return nil
