@@ -109,9 +109,15 @@ struct IssueList: AsyncParsableCommand {
                 ? StatusBadge.open(iidText, enabled: on)
                 : StatusBadge.closed(iidText, enabled: on)
             let iidToken = OSC8.wrap(iidColored, url: issue.webUrl.absoluteString, enabled: on)
-            let labelChunk = issue.labels.isEmpty
-                ? ""
-                : "  " + ANSI.cyan("(\(issue.labels.joined(separator: ", ")))")
+            // Gate cyan on `on` so `--color=never` actually disables
+            // it (bare `ANSI.cyan` only checks `TTY.isStdoutColorEnabled`).
+            let labelChunk: String
+            if issue.labels.isEmpty {
+                labelChunk = ""
+            } else {
+                let raw = "(\(issue.labels.joined(separator: ", ")))"
+                labelChunk = "  " + (on ? ANSI.cyan(raw) : raw)
+            }
             Shell.print("\(iidToken)\t\(issue.title)\(labelChunk)")
         }
     }

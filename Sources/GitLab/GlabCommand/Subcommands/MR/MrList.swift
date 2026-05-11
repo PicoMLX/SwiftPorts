@@ -133,10 +133,20 @@ struct MrList: AsyncParsableCommand {
         for mr in mrs {
             let iidToken = OSC8.wrap("!\(mr.iid)", url: mr.webUrl.absoluteString, enabled: on)
             let stateLabel = MrSupport.renderState(mr.state, enabled: on)
-            let labelChunk = mr.labels.isEmpty
-                ? ""
-                : "  " + ANSI.cyan("(\(mr.labels.joined(separator: ", ")))")
-            Shell.print("\(iidToken)\t\(stateLabel)\t\(mr.title)\t\(ANSI.dim("[\(mr.sourceBranch) → \(mr.targetBranch)]"))\(labelChunk)")
+            // Honor `--color=never` here too — bare `ANSI.dim` /
+            // `ANSI.cyan` gate only on `TTY.isStdoutColorEnabled`, so
+            // they'd still emit escapes on a TTY when the user asked
+            // for plain output.
+            let branchSpan = "[\(mr.sourceBranch) → \(mr.targetBranch)]"
+            let branch = on ? ANSI.dim(branchSpan) : branchSpan
+            let labelChunk: String
+            if mr.labels.isEmpty {
+                labelChunk = ""
+            } else {
+                let raw = "(\(mr.labels.joined(separator: ", ")))"
+                labelChunk = "  " + (on ? ANSI.cyan(raw) : raw)
+            }
+            Shell.print("\(iidToken)\t\(stateLabel)\t\(mr.title)\t\(branch)\(labelChunk)")
         }
     }
 }
