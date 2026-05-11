@@ -115,6 +115,7 @@ final class ANSIRenderer {
         case is LineBreak:                         write("\n")
         case let html as HTMLBlock:                visitHTMLBlock(html)
         case let inlineHTML as InlineHTML:         write(Styled.render(inlineHTML.rawHTML, style: style.htmlSpan.style, on: terminal))
+        case let table as Markdown.Table:          visitTable(table)
         default:
             visitChildren(of: markup)
         }
@@ -311,6 +312,174 @@ final class ANSIRenderer {
         let stripped = html.rawHTML
             .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         write(Styled.render(stripped, style: style.htmlBlock.style, on: terminal))
+    }
+
+    // MARK: - Tables
+
+    /// Render a GFM table as an ASCII grid: a header row, a row of
+    /// dashes, then each body row. Honors per-column alignment
+    /// (left / center / right) and uses the bundled style's
+    /// `center_separator` / `column_separator` / `row_separator`
+    /// tokens (default `|` / `|` / `-`, matching the notty style).
+    ///
+    /// Each cell is rendered through `visitChildren` (so inline
+    /// formatting — emphasis, code spans, links — survives), then
+    /// padded to the column's measured width. Multi-line content
+    /// is laid out as stacked rows of equal-width strips so the
+    /// grid stays aligned regardless of how tall any single cell
+    /// turns out to be.
+    private func visitTable(_ table: Markdown.Table) {
+        if table.indexInParent > 0 { write("\n") }
+        let columnCount = max(1, table.maxColumnCount)
+        let alignments: [Markdown.Table.ColumnAlignment?] = (0..<columnCount).map { i in
+            i < table.columnAlignments.count ? table.columnAlignments[i] : nil
+        }
+
+        let headerCells = extractCells(from: table.head, columnCount: columnCount)
+        var bodyRows: [[String]] = []
+        for child in table.body.children {
+            if let row = child as? Markdown.Table.Row {
+                bodyRows.append(extractCells(from: row, columnCount: columnCount))
+            }
+        }
+
+        // Column widths = max printable width of any cell in the
+        // column, header included. `Wrap.printWidth` skips ANSI
+        // escape sequences so styled cells still measure correctly.
+        var colWidths = [Int](repeating: 0, count: columnCount)
+        for (i, cell) in headerCells.enumerated() where i < columnCount {
+            colWidths[i] = max(colWidths[i], maxLineWidth(cell))
+        }
+        for row in bodyRows {
+            for (i, cell) in row.enumerated() where i < columnCount {
+                colWidths[i] = max(colWidths[i], maxLineWidth(cell))
+            }
+        }
+
+        let colSep = style.table.columnSeparator ?? "|"
+        let centerSep = style.table.centerSeparator ?? colSep
+        let rowSep = style.table.rowSeparator ?? "-"
+
+        // Header.
+        write(renderTableRow(headerCells, widths: colWidths,
+                             alignments: alignments, columnSeparator: colSep))
+        write("\n")
+        // Separator row: dashes per column, the configured `center_separator`
+        // (typically `|`) between columns, like real `| --- | --- |`.
+        write(renderTableSeparator(widths: colWidths,
+                                   alignments: alignments,
+                                   rowSeparator: rowSep,
+                                   centerSeparator: centerSep))
+        write("\n")
+        for row in bodyRows {
+            write(renderTableRow(row, widths: colWidths,
+                                 alignments: alignments, columnSeparator: colSep))
+            write("\n")
+        }
+    }
+
+    /// Pull plain inline-rendered cells out of a row-shaped markup
+    /// node (either `Table.Head` or `Table.Row`). Cells with
+    /// `colspan > 1` get padded with empty siblings so column
+    /// indices stay aligned.
+    private func extractCells<R: Markup>(
+        from row: R,
+        columnCount: Int
+    ) -> [String] {
+        var cells: [String] = []
+        for child in row.children {
+            guard let cell = child as? Markdown.Table.Cell else { continue }
+            let text = capture { visitChildren(of: cell) }
+            cells.append(text)
+            let span = Int(cell.colspan)
+            if span > 1 {
+                for _ in 1..<span { cells.append("") }
+            }
+        }
+        while cells.count < columnCount { cells.append("") }
+        return cells
+    }
+
+    private func maxLineWidth(_ s: String) -> Int {
+        s.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { Wrap.printWidth(String($0)) }
+            .max() ?? 0
+    }
+
+    /// Format a single row's cells into one grid line. Multi-line
+    /// cells (containing `\n` characters) get expanded — each line
+    /// of the tallest cell becomes its own output line, with shorter
+    /// cells padded with blank strips so the column rules stay
+    /// vertical.
+    private func renderTableRow(
+        _ cells: [String],
+        widths: [Int],
+        alignments: [Markdown.Table.ColumnAlignment?],
+        columnSeparator: String
+    ) -> String {
+        let cellLines = cells.map {
+            $0.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        }
+        let height = cellLines.map(\.count).max() ?? 1
+        var out: [String] = []
+        for line in 0..<height {
+            var parts: [String] = ["\(columnSeparator)"]
+            for col in 0..<widths.count {
+                let raw: String = cellLines.indices.contains(col)
+                    && cellLines[col].indices.contains(line)
+                    ? cellLines[col][line] : ""
+                let aligned = padCell(raw, width: widths[col],
+                                      alignment: alignments[col] ?? .left)
+                parts.append(" \(aligned) ")
+                parts.append(columnSeparator)
+            }
+            out.append(parts.joined())
+        }
+        return out.joined(separator: "\n")
+    }
+
+    private func renderTableSeparator(
+        widths: [Int],
+        alignments: [Markdown.Table.ColumnAlignment?],
+        rowSeparator: String,
+        centerSeparator: String
+    ) -> String {
+        var parts: [String] = [centerSeparator]
+        for col in 0..<widths.count {
+            // GFM separator: `:`-prefix marks left-aligned, suffix marks
+            // right-aligned, both marks center. The `nil` case (no
+            // explicit alignment) emits a plain dash run. Defaulting
+            // `nil` to `.left` here would conflate `|---|` with
+            // `|:---|` and drop the original alignment hint, which
+            // breaks round-tripping through downstream consumers that
+            // inspect the separator row.
+            let align = alignments[col]
+            let dashCount = max(1, widths[col])
+            let dashes = String(repeating: rowSeparator, count: dashCount)
+            let left  = (align == .center || align == .left)  ? ":" : rowSeparator
+            let right = (align == .center || align == .right) ? ":" : rowSeparator
+            parts.append(left + dashes + right)
+            parts.append(centerSeparator)
+        }
+        return parts.joined()
+    }
+
+    private func padCell(
+        _ text: String,
+        width: Int,
+        alignment: Markdown.Table.ColumnAlignment
+    ) -> String {
+        let printed = Wrap.printWidth(text)
+        guard printed < width else { return text }
+        let pad = width - printed
+        switch alignment {
+        case .right:  return String(repeating: " ", count: pad) + text
+        case .center:
+            let left = pad / 2
+            let right = pad - left
+            return String(repeating: " ", count: left) + text + String(repeating: " ", count: right)
+        case .left:   return text + String(repeating: " ", count: pad)
+        }
     }
 
     // MARK: - Block helpers
