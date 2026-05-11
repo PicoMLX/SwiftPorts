@@ -71,6 +71,10 @@ struct MrList: AsyncParsableCommand {
     @Flag(name: .long, help: "Print as JSON array.")
     var json: Bool = false
 
+    @Option(name: .customLong("color"),
+            help: "Colorize output: always, auto (default), or never.")
+    var color: ColorChoice = .auto
+
     func run() async throws {
         let target = try await CommandContext.resolveRepo(flag: repo)
         let client = try await CommandContext.apiClient(host: target.host)
@@ -125,12 +129,24 @@ struct MrList: AsyncParsableCommand {
             Shell.print("No merge requests match.")
             return
         }
+        let on = color.resolved()
         for mr in mrs {
-            let stateLabel = MrSupport.renderState(mr.state)
-            let labelChunk = mr.labels.isEmpty
-                ? ""
-                : "  " + ANSI.cyan("(\(mr.labels.joined(separator: ", ")))")
-            Shell.print("!\(mr.iid)\t\(stateLabel)\t\(mr.title)\t\(ANSI.dim("[\(mr.sourceBranch) → \(mr.targetBranch)]"))\(labelChunk)")
+            let iidToken = OSC8.wrap("!\(mr.iid)", url: mr.webUrl.absoluteString, enabled: on)
+            let stateLabel = MrSupport.renderState(mr.state, enabled: on)
+            // Honor `--color=never` here too — bare `ANSI.dim` /
+            // `ANSI.cyan` gate only on `TTY.isStdoutColorEnabled`, so
+            // they'd still emit escapes on a TTY when the user asked
+            // for plain output.
+            let branchSpan = "[\(mr.sourceBranch) → \(mr.targetBranch)]"
+            let branch = on ? ANSI.dim(branchSpan) : branchSpan
+            let labelChunk: String
+            if mr.labels.isEmpty {
+                labelChunk = ""
+            } else {
+                let raw = "(\(mr.labels.joined(separator: ", ")))"
+                labelChunk = "  " + (on ? ANSI.cyan(raw) : raw)
+            }
+            Shell.print("\(iidToken)\t\(stateLabel)\t\(mr.title)\t\(branch)\(labelChunk)")
         }
     }
 }
