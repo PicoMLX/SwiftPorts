@@ -548,14 +548,16 @@ final class ANSIRenderer {
         write(Styled.render(inner, style: style, on: terminal))
     }
 
-    /// Apply block_prefix / prefix / suffix / block_suffix around
-    /// already-styled content.
+    /// Apply `block_prefix` / `block_suffix` around already-styled
+    /// content. The inline `prefix` / `suffix` are now applied
+    /// INSIDE the SGR envelope by `MarginWriter.apply` so the
+    /// styled bg/fg covers them — matching upstream glamour. Only
+    /// the block-level markers (e.g. blockquote's `> `) remain
+    /// outside.
     private func prefixSuffixed(_ s: String, style: StylePrimitive) -> String {
         var out = ""
         if let bp = style.blockPrefix { out += bp }
-        if let p = style.prefix       { out += p }
         out += s
-        if let s2 = style.suffix      { out += s2 }
         if let bs = style.blockSuffix { out += bs }
         return out
     }

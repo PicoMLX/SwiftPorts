@@ -34,6 +34,17 @@ public enum MarginWriter {
             ? String(repeating: indentToken, count: indent)
             : ""
 
+        // Inline prefix / suffix go INSIDE the SGR envelope so the
+        // styled fg/bg covers them — matches upstream glamour's
+        // " SwiftBash " rendering where the leading/trailing space
+        // is part of the heading's coloured bar. (`block_prefix` /
+        // `block_suffix` stay OUTSIDE the envelope, applied
+        // separately by `prefixSuffixed` in the renderer.)
+        let inlinePrefix = style.prefix ?? ""
+        let inlineSuffix = style.suffix ?? ""
+        let prefixWidth = Wrap.printWidth(inlinePrefix)
+        let suffixWidth = Wrap.printWidth(inlineSuffix)
+
         let needsRightPad = fillBackground && style.backgroundColor != nil
         let (open, close) = Styled.envelope(style, on: terminal)
 
@@ -41,12 +52,15 @@ public enum MarginWriter {
         for raw in content.split(separator: "\n", omittingEmptySubsequences: false) {
             var line = String(raw)
             if needsRightPad {
-                let printed = Wrap.printWidth(line)
+                // Padding sees the prefix + content + suffix as the
+                // styled run we need to fill against `width`.
+                let printed = prefixWidth + Wrap.printWidth(line) + suffixWidth
                 if printed < width {
                     line += String(repeating: " ", count: width - printed)
                 }
             }
-            let wrapped = open + line + close
+            let styledRun = inlinePrefix + line + inlineSuffix
+            let wrapped = open + styledRun + close
             lines.append(leadingMargin + indentRun + wrapped)
         }
         return lines.joined(separator: "\n")
