@@ -155,7 +155,19 @@ final class ANSIRenderer {
            !(paragraph.parent is ListItem) {
             write("\n")
         }
-        let merged = Cascade.block(stack.last?.style ?? StyleBlock(), style.paragraph)
+        // `toBlock: false` so the AST-parent (document, blockquote,
+        // list-item, …) only contributes inline colour / weight to
+        // paragraph text — its own `block_prefix` / `block_suffix`
+        // and inline `prefix` / `suffix` are structural decorations
+        // belonging to THAT element type and must not leak into the
+        // child paragraph's wrapper. The previous default-true
+        // cascade was inheriting the document's `block_prefix:"\n"`
+        // and `block_suffix:"\n"` onto every paragraph, producing
+        // three extra blank lines around each one.
+        let merged = Cascade.block(
+            stack.last?.style ?? StyleBlock(),
+            style.paragraph,
+            toBlock: false)
         let block = renderInlineBlock(merged.style) { visitChildren(of: paragraph) }
         emitBlock(block, with: merged, defaultMargin: false, trailingNewline: true)
     }
