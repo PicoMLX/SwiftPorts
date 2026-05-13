@@ -436,23 +436,26 @@ final class ANSIRenderer {
         alignments: [Markdown.Table.ColumnAlignment?],
         columnSeparator: String
     ) -> String {
+        // Real glamour renders rows as `cell │ cell │ cell` — no
+        // outer borders, single space on each side of the column
+        // separator. The leading `│` we used to emit duplicated the
+        // markdown source and added visual noise our box-character
+        // style had no use for.
         let cellLines = cells.map {
             $0.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         }
         let height = cellLines.map(\.count).max() ?? 1
         var out: [String] = []
         for line in 0..<height {
-            var parts: [String] = ["\(columnSeparator)"]
+            var cols: [String] = []
             for col in 0..<widths.count {
                 let raw: String = cellLines.indices.contains(col)
                     && cellLines[col].indices.contains(line)
                     ? cellLines[col][line] : ""
-                let aligned = padCell(raw, width: widths[col],
-                                      alignment: alignments[col] ?? .left)
-                parts.append(" \(aligned) ")
-                parts.append(columnSeparator)
+                cols.append(padCell(raw, width: widths[col],
+                                    alignment: alignments[col] ?? .left))
             }
-            out.append(parts.joined())
+            out.append(cols.joined(separator: " \(columnSeparator) "))
         }
         return out.joined(separator: "\n")
     }
@@ -463,24 +466,21 @@ final class ANSIRenderer {
         rowSeparator: String,
         centerSeparator: String
     ) -> String {
-        var parts: [String] = [centerSeparator]
+        // Matching the row renderer: no outer borders, just
+        // `dashes┼dashes┼dashes`. The dash run includes the two
+        // padding columns the row renderer adds around each cell
+        // (`<sep>` becomes ` <sep> `), so vertical alignment between
+        // the separator row and the data rows is preserved. We do
+        // NOT emit the GFM `:`-alignment markers in the visual
+        // output — those belong in the markdown SOURCE, not in the
+        // rendered table.
+        let _ = alignments
+        var parts: [String] = []
         for col in 0..<widths.count {
-            // GFM separator: `:`-prefix marks left-aligned, suffix marks
-            // right-aligned, both marks center. The `nil` case (no
-            // explicit alignment) emits a plain dash run. Defaulting
-            // `nil` to `.left` here would conflate `|---|` with
-            // `|:---|` and drop the original alignment hint, which
-            // breaks round-tripping through downstream consumers that
-            // inspect the separator row.
-            let align = alignments[col]
-            let dashCount = max(1, widths[col])
-            let dashes = String(repeating: rowSeparator, count: dashCount)
-            let left  = (align == .center || align == .left)  ? ":" : rowSeparator
-            let right = (align == .center || align == .right) ? ":" : rowSeparator
-            parts.append(left + dashes + right)
-            parts.append(centerSeparator)
+            let dashCount = max(1, widths[col] + 2)
+            parts.append(String(repeating: rowSeparator, count: dashCount))
         }
-        return parts.joined()
+        return parts.joined(separator: centerSeparator)
     }
 
     private func padCell(
