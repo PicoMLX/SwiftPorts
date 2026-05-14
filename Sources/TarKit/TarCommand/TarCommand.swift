@@ -115,8 +115,12 @@ public struct TarCommand: AsyncParsableCommand {
             compression: compression,
             recursive: true,
             followSymlinks: false)
+        // Hand the user's argv paths through to `Archive.create` so
+        // top-level entries record the path the user typed
+        // (`sub/file.txt`) instead of the basename their resolved
+        // URL collapses to (`file.txt`).
         let written = try await TarKit.Archive.create(
-            at: url, paths: inputs, options: opts)
+            at: url, paths: inputs, archivePaths: args, options: opts)
         if verbose {
             for e in written {
                 Shell.current.stderr.write(

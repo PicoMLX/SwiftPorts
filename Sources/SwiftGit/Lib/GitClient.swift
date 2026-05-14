@@ -264,6 +264,23 @@ public struct GitClient: ForgeKit.GitClient {
         }
     }
 
+    /// Stage every tracked file that has working-tree changes —
+    /// the libgit2 equivalent of `git add -u`. Untracked files are
+    /// left alone. Called by `commit -a` / `commit --all` to keep
+    /// `commit` itself confined to "record the index", with the
+    /// staging step explicit and opt-in.
+    public func stageTrackedChanges() async throws {
+        try await withRepository { repo in
+            var index: OpaquePointer?
+            try check(git_repository_index(&index, repo))
+            defer { git_index_free(index) }
+            // `update_all` re-reads only paths that are already in
+            // the index — exactly the `add -u` semantics we want.
+            try check(git_index_update_all(index, nil, nil, nil))
+            try check(git_index_write(index))
+        }
+    }
+
     public func add(paths: [String]) async throws {
         try await withRepository { repo in
             var index: OpaquePointer?
@@ -273,10 +290,15 @@ public struct GitClient: ForgeKit.GitClient {
             if paths.isEmpty {
                 try check(git_index_add_all(index, nil, 0, nil, nil))
             } else {
-                try withCStringArray(paths) { cStrings in
-                    try cStrings.withUnsafeMutableBufferPointer { buf in
-                        var arr = git_strarray(strings: buf.baseAddress, count: buf.count)
-                        try check(git_index_add_all(index, &arr, 0, nil, nil))
+                // Use `git_index_add_bypath` per path rather than
+                // `git_index_add_all` with a pathspec — `add_all`
+                // ignores the pathspec for new files and stages
+                // every untracked entry, so `git add sub/file.txt`
+                // ended up staging everything below the worktree
+                // root. `add_bypath` stages exactly the named blob.
+                for path in paths {
+                    try path.withCString { cstr in
+                        try check(git_index_add_bypath(index, cstr))
                     }
                 }
             }
@@ -299,12 +321,18 @@ public struct GitClient: ForgeKit.GitClient {
         allowEmpty: Bool
     ) async throws -> Libgit2CommitDetails {
         try await withRepository { repo in
-            // 1. Stage all working-tree changes (mirrors `git add -A`).
+            // Commit exactly what's staged in the index — DO NOT
+            // implicitly stage working-tree changes first. The
+            // previous behaviour called `git_index_add_all` here so
+            // `git commit -m "x"` doubled as `git commit -a`, which
+            // meant `git add sub/file.txt && git commit` ended up
+            // committing every untracked file in the worktree
+            // instead of just the named path. Callers that want
+            // `commit -a` semantics should do their own explicit
+            // `add(paths: [])` before calling this.
             var index: OpaquePointer?
             try check(git_repository_index(&index, repo))
             defer { git_index_free(index) }
-            try check(git_index_add_all(index, nil, 0, nil, nil))
-            try check(git_index_write(index))
 
             // 2. Resolve parent commit (if any). Unborn HEAD = first commit.
             var parentOID = git_oid()

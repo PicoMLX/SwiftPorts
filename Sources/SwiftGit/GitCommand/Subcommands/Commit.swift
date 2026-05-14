@@ -7,7 +7,7 @@ import SwiftGit
 struct Commit: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "commit",
-        abstract: "Stage all changes and create a new commit on HEAD."
+        abstract: "Record changes from the index as a new commit on HEAD."
     )
 
     @Option(name: [.customShort("m"), .customLong("message")],
@@ -18,6 +18,10 @@ struct Commit: AsyncParsableCommand {
             help: "Override the commit author. Format: \"Name <email>\".")
     var author: String?
 
+    @Flag(name: [.customShort("a"), .customLong("all")],
+          help: "Stage modified and deleted tracked files before committing (does NOT add untracked files).")
+    var stageAllTracked: Bool = false
+
     @Flag(name: .customLong("allow-empty"),
           help: "Allow recording a commit that has the same tree as its parent.")
     var allowEmpty: Bool = false
@@ -25,6 +29,15 @@ struct Commit: AsyncParsableCommand {
     func run() async throws {
         let parsedAuthor = try author.map { try Self.parseAuthor($0) }
         let client = CommandContext.gitClient()
+
+        // `-a` / `--all` mirrors real `git commit -a`: stage every
+        // tracked file that has working-tree changes, then commit.
+        // Untracked files still require an explicit `git add`. The
+        // bare `git commit` form (no flag) commits only what's
+        // already in the index.
+        if stageAllTracked {
+            try await client.stageTrackedChanges()
+        }
 
         let details: Libgit2CommitDetails
         do {

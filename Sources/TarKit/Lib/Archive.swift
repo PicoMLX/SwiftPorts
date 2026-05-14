@@ -163,11 +163,16 @@ public enum Archive {
     public static func create(
         at url: URL,
         paths: [URL],
+        archivePaths: [String]? = nil,
         options: CreateOptions = .init()
     ) async throws -> [Entry] {
         try await Shell.authorize(url)
         for input in paths {
             try await Shell.authorize(input)
+        }
+        if let archivePaths {
+            precondition(archivePaths.count == paths.count,
+                "archivePaths.count must match paths.count")
         }
         let fm = FileManager.default
         if fm.fileExists(atPath: url.path) {
@@ -188,8 +193,16 @@ public enum Archive {
         }
 
         var written: [Entry] = []
-        for input in paths {
-            try walk(source: input, prefix: nil,
+        for (i, input) in paths.enumerated() {
+            // `archivePath` (when supplied) is the user-typed argv
+            // path, preserved so `tar -cf out.tar sub/file.txt`
+            // stores the entry as `sub/file.txt` rather than just
+            // `file.txt`. Falling back to `lastPathComponent` keeps
+            // existing in-tree callers (test fixtures, programmatic
+            // callers without a CLI argv) on the previous behaviour.
+            try walk(source: input,
+                     archivePath: archivePaths?[i],
+                     prefix: nil,
                      writer: writer, options: options,
                      into: &written)
         }
@@ -198,7 +211,9 @@ public enum Archive {
     }
 
     private static func walk(
-        source: URL, prefix: String?,
+        source: URL,
+        archivePath: String? = nil,
+        prefix: String?,
         writer: ArchiveWriter, options: CreateOptions,
         into written: inout [Entry]
     ) throws {
@@ -206,7 +221,21 @@ public enum Archive {
         let fm = FileManager.default
         let attrs = try fm.attributesOfItem(atPath: source.path)
         let type = attrs[.type] as? FileAttributeType
-        let topName = source.lastPathComponent
+        // For top-level entries (prefix is nil), honour the user-
+        // supplied archive path so relative path components flow
+        // into the archive verbatim. Real tar strips a leading `/`
+        // (with a warning) from absolute paths to keep archives
+        // portable; we drop the slash silently. Recursive descent
+        // (prefix non-nil) always uses the basename — the prefix
+        // already encodes the path from the top-level walk.
+        let topName: String
+        if let archivePath, prefix == nil {
+            topName = archivePath.hasPrefix("/")
+                ? String(archivePath.drop(while: { $0 == "/" }))
+                : archivePath
+        } else {
+            topName = source.lastPathComponent
+        }
         let entryPath: String
         if let prefix, !prefix.isEmpty {
             entryPath = "\(prefix)/\(topName)"
