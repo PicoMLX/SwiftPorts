@@ -436,8 +436,13 @@ public struct Walker: Sendable {
         for (i, parent) in ordered.enumerated() {
             let prefix = parent == "/" ? "/" : parent + "/"
             let withinRepo = vcsBoundaryIndex.map { i >= $0 } ?? false
+            // With `--no-require-git`, parent `.gitignore` applies
+            // universally — same loosening upstream's `require_git=false`
+            // does. With `requireGit=true` (default) it stays scoped
+            // to the current repo.
+            let applyParentGitignore = !options.requireGit || withinRepo
 
-            if options.respectGitignore && withinRepo {
+            if options.respectGitignore && applyParentGitignore {
                 loadParentIgnoreFile(
                     at: URL(fileURLWithPath: prefix + ".gitignore"),
                     baseAbsolute: parent,
@@ -454,7 +459,9 @@ public struct Walker: Sendable {
                     into: &ignores)
             }
             // `.git/info/exclude` lives once per repo — at the VCS
-            // boundary itself, not at every ancestor below it.
+            // boundary itself, not at every ancestor below it. Even
+            // under `--no-require-git`, the file only exists if `.git`
+            // is actually present, so the boundary check stands.
             if options.respectExclude && i == vcsBoundaryIndex {
                 loadParentIgnoreFile(
                     at: URL(fileURLWithPath: prefix + ".git/info/exclude"),

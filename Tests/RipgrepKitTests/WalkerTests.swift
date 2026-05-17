@@ -324,6 +324,29 @@ import Testing
         #expect(paths.sorted() == ["a.txt", "b.log"])
     }
 
+    @Test func noRequireGitAppliesParentGitignoreOutsideRepo() throws {
+        // Codex caught this: when --no-require-git is set, parent
+        // .gitignore should also apply, even without a VCS marker
+        // anywhere in the chain. Otherwise files leak into results
+        // despite the flag.
+        let parent = makeTree([
+            ".gitignore": "*.log\n",
+            "sub/a.txt": "x",
+            "sub/drop.log": "y",
+        ])
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        var opts = WalkerOptions()
+        opts.requireGit = false
+        let searchRoot = parent.appendingPathComponent("sub")
+        var paths: [String] = []
+        try Walker(options: opts)
+            .walk(roots: [Walker.Root(url: searchRoot, display: ".")]) { e in
+                paths.append(e.relativePath)
+            }
+        #expect(paths == ["a.txt"])
+    }
+
     @Test func noRequireGitAppliesRootGitignoreEverywhere() throws {
         // With --no-require-git, the stray .gitignore is honored even
         // outside a repo. Mirrors upstream's `--no-require-git`.
