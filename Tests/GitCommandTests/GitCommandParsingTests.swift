@@ -746,6 +746,37 @@ struct GitCommandParsingTests {
         _ = try parse(["ls-files"], as: LsFiles.self)
     }
 
+    @Test("grep: pattern + paths")
+    func grepPatternAndPaths() throws {
+        let cmd = try parse(["grep", "TODO", "src", "docs"], as: Grep.self)
+        #expect(cmd.pattern == "TODO")
+        #expect(cmd.paths == ["src", "docs"])
+        #expect(cmd.ignoreCase == false)
+        #expect(cmd.lineNumber == false)
+    }
+
+    @Test("grep: -i -n short flags")
+    func grepShortFlags() throws {
+        let cmd = try parse(["grep", "-i", "-n", "needle"], as: Grep.self)
+        #expect(cmd.pattern == "needle")
+        #expect(cmd.ignoreCase == true)
+        #expect(cmd.lineNumber == true)
+    }
+
+    @Test("grep: -l and -c are independent flags")
+    func grepOutputModeFlags() throws {
+        let nameOnly = try parse(["grep", "-l", "x"], as: Grep.self)
+        #expect(nameOnly.nameOnly == true)
+        let count = try parse(["grep", "-c", "x"], as: Grep.self)
+        #expect(count.count == true)
+    }
+
+    @Test("grep: --untracked extends the search to untracked-not-ignored")
+    func grepUntrackedFlag() throws {
+        let cmd = try parse(["grep", "--untracked", "x"], as: Grep.self)
+        #expect(cmd.untracked == true)
+    }
+
     @Test("missing subcommand exits non-zero")
     func missingSubcommandFails() {
         #expect(throws: (any Error).self) {

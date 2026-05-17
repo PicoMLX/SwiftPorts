@@ -10,7 +10,14 @@ struct Entry {
             // Real git accepts attached short-option-with-value forms
             // like `-U3` (= `-U 3`). ArgumentParser doesn't support
             // those for typed options, so split them out before parsing.
-            let argv = Self.preprocess(Array(Shell.arguments.dropFirst()))
+            //
+            // `Shell.arguments` already strips argv[0] (see
+            // `Shell.processDefault` in ShellKit), so we hand it to
+            // the preprocessor as-is. The earlier `dropFirst()` here
+            // was a leftover from when this read `CommandLine.arguments`
+            // directly; double-dropping made `git <subcommand>` (with
+            // no extra args) silently print the root help.
+            let argv = Self.preprocess(Shell.arguments)
             var cmd = try GitCommand.parseAsRoot(argv)
             if var asyncCmd = cmd as? any AsyncParsableCommand {
                 try await asyncCmd.run()

@@ -43,6 +43,7 @@ public struct GitCommand: AsyncParsableCommand {
             Switch.self,
             Restore.self,
             LsFiles.self,
+            Grep.self,
             Clean.self,
             Blame.self,
             Apply.self,
