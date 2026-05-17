@@ -96,6 +96,8 @@ struct EntryFilter {
                     if metadata.fileSize < constraint.bytes { return false }
                 case .atMost:
                     if metadata.fileSize > constraint.bytes { return false }
+                case .exactly:
+                    if metadata.fileSize != constraint.bytes { return false }
                 }
             }
         } else if !options.sizeConstraints.isEmpty && !metadata.isRegularFile {

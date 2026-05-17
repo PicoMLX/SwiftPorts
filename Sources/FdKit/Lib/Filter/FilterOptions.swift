@@ -40,7 +40,14 @@ public struct FilterOptions: Sendable {
     public var sizeConstraints: [SizeConstraint] = []
 
     public struct SizeConstraint: Sendable, Equatable {
-        public enum Direction: Sendable { case atLeast, atMost }
+        public enum Direction: Sendable {
+            case atLeast
+            case atMost
+            /// Unsigned `--size N` means exactly N bytes — fd-style.
+            /// Only the signed forms (`+N` / `-N`) loosen this into a
+            /// bound.
+            case exactly
+        }
         public let direction: Direction
         public let bytes: UInt64
 

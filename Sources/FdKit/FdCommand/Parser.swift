@@ -38,6 +38,11 @@ enum Parser {
         var printer = FdKit.PrinterOptions()
         var color: ColorChoice = .auto
         var positionals: [String] = []
+        // `--search-path` values live outside the generic positional
+        // list. If we threw them in with positionals, the
+        // "first positional is the pattern" rule would consume them
+        // as PATTERN and lose the user's intended root.
+        var explicitSearchPaths: [String] = []
 
         var i = 0
         var doubleDashSeen = false
@@ -245,8 +250,17 @@ enum Parser {
                     printer.pathSeparator = try require("--path-separator", v)
                     i += 1; continue
                 case "color":
-                    let v = value ?? "always"
-                    color = ColorChoice(argument: v) ?? .auto
+                    // Accept both `--color=when` and `--color when`.
+                    // Reject unknown values so typos surface as
+                    // argument errors instead of silently picking
+                    // `.auto`.
+                    let v = try require("--color",
+                                        value ?? takeValue(argv, &i))
+                    guard let parsed = ColorChoice(argument: v) else {
+                        throw ArgError(
+                            message: "invalid --color value '\(v)' (expected auto / always / never)")
+                    }
+                    color = parsed
                     i += 1; continue
                 case "no-color":
                     color = .never
@@ -262,7 +276,7 @@ enum Parser {
                     i += 1; continue
                 case "search-path":
                     let v = try value ?? takeValue(argv, &i)
-                    positionals.append(try require("--search-path", v))
+                    explicitSearchPaths.append(try require("--search-path", v))
                     i += 1; continue
                 case "show-errors", "no-show-errors", "prune",
                      "no-config", "list-details", "owner", "no-owner",
@@ -394,11 +408,14 @@ enum Parser {
         }
 
         // First positional → pattern (if no prior pattern was set).
-        // Everything after → search paths.
+        // Everything after → search paths. `--search-path` entries are
+        // appended afterwards so they always act as roots, even when
+        // no pattern was supplied at all.
         if !positionals.isEmpty {
             pat.pattern = positionals.first!
             out.paths = Array(positionals.dropFirst())
         }
+        out.paths.append(contentsOf: explicitSearchPaths)
 
         out.config.pattern = pat
         out.config.filter = filter
@@ -418,14 +435,21 @@ enum Parser {
         return nil
     }
 
-    /// Parse fd's `--size` spec: a leading `+` or `-` (default `+`)
-    /// followed by digits and an optional suffix (`b`, `k`/`ki`,
-    /// `m`/`mi`, `g`/`gi`, `t`/`ti`). The suffix without `i` is
-    /// powers-of-10; with `i` is powers-of-2. fd accepts both.
+    /// Parse fd's `--size` spec: an optional `+` or `-` sign followed
+    /// by digits and an optional suffix (`b`, `k`/`ki`, `m`/`mi`,
+    /// `g`/`gi`, `t`/`ti`). The suffix without `i` is powers-of-10;
+    /// with `i` is powers-of-2. fd accepts both.
+    ///
+    /// Sign semantics — mirrors what upstream fd documents:
+    ///   * `+N` → file size must be at least N.
+    ///   * `-N` → file size must be at most N.
+    ///   * `N`  → file size must be exactly N. (The previous default
+    ///     was `.atLeast`, which silently broadened scripts that
+    ///     wanted exact-size filtering.)
     private static func parseSizeConstraint(_ raw: String) throws
     -> FilterOptions.SizeConstraint {
         var s = raw
-        var dir: FilterOptions.SizeConstraint.Direction = .atLeast
+        var dir: FilterOptions.SizeConstraint.Direction = .exactly
         if s.hasPrefix("+") {
             dir = .atLeast
             s.removeFirst()

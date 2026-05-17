@@ -441,4 +441,115 @@ import Testing
         let cmd = try FdCommand.parse(["--glob", "*.txt", "."])
         #expect(cmd.rawArgv == ["--glob", "*.txt", "."])
     }
+
+    // MARK: - Regression tests for PR review feedback
+
+    /// `fd --search-path PATH` (no positional pattern) must scope the
+    /// listing to PATH, not consume PATH as the pattern. Regression:
+    /// PR #38 review — the parser was appending `--search-path`
+    /// values into the generic positional list, so the first one was
+    /// being picked up as PATTERN and dropped from the root list.
+    @Test func searchPathIsTreatedAsRoot() async throws {
+        let r = try await run([
+            "--color=never", "--search-path", "sub",
+        ], in: [
+            "a.txt":     "x",
+            "sub/b.txt": "y",
+            "sub/c.txt": "z",
+        ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        let lines = r.stdout
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+            .sorted()
+        // Every emitted line should live under `sub/`.
+        #expect(!lines.isEmpty)
+        for line in lines {
+            #expect(line.hasPrefix("sub/") || line == "sub",
+                    "unexpected listing outside sub: \(line)")
+        }
+        #expect(lines.contains(where: { $0.hasSuffix("b.txt") }))
+        #expect(lines.contains(where: { $0.hasSuffix("c.txt") }))
+    }
+
+    /// Combining a real pattern with `--search-path` should still
+    /// route the pattern to PATTERN and the flag value to the roots.
+    @Test func searchPathCoexistsWithPattern() async throws {
+        let r = try await run([
+            "--color=never", "--search-path", "sub", "\\.txt$",
+        ], in: [
+            "a.txt":     "x",
+            "sub/b.txt": "y",
+            "sub/c.md":  "z",
+        ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.stdout.contains("sub/b.txt"))
+        #expect(!r.stdout.contains("sub/c.md"))
+        // The `a.txt` at root must not appear — only `sub/` is searched.
+        #expect(!r.stdout.contains("\na.txt"))
+    }
+
+    /// Unsigned `--size N` must filter for files *exactly* that size,
+    /// not "at least N". Regression: PR #38 review — the default
+    /// direction was `.atLeast`, so `--size 10` was treated as `≥10`
+    /// and silently broadened scripts that wanted exact-size matches.
+    @Test func sizeFilterUnsignedIsExact() async throws {
+        // Three files: 1B, 5B, 10B. `-S 5b` should match only the
+        // middle one.
+        let r = try await run(
+            ["--color=never", "-t", "f", "-S", "5b"],
+            in: [
+                "small.txt":  "a",
+                "medium.txt": "aaaaa",
+                "big.txt":    "aaaaaaaaaa",
+            ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.stdout.contains("medium.txt"))
+        #expect(!r.stdout.contains("small.txt"))
+        #expect(!r.stdout.contains("big.txt"))
+    }
+
+    /// `-S -N` keeps the at-most semantics — verify the signed forms
+    /// still work after the default flipped to `.exactly`.
+    @Test func sizeFilterAtMost() async throws {
+        let r = try await run(
+            ["--color=never", "-t", "f", "-S", "-2b"],
+            in: [
+                "tiny.txt":   "a",
+                "medium.txt": "aaaaa",
+            ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.stdout.contains("tiny.txt"))
+        #expect(!r.stdout.contains("medium.txt"))
+    }
+
+    /// `--color never` (space-separated value) must parse as the
+    /// `.never` choice. Regression: PR #38 review — the value-side of
+    /// the long flag was hard-coded to `"always"` when inline was
+    /// absent, so `--color never` ended up enabling color and
+    /// leaking `never` into the positional list.
+    @Test func colorAcceptsSpaceSeparatedValue() async throws {
+        let r = try await run(["--color", "never"], in: [
+            "a.txt": "x",
+        ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.exit == 0)
+        // No ANSI escape should leak through with `--color never`.
+        #expect(!r.stdout.contains("\u{1B}["),
+                "ANSI escape in --color never output: \(r.stdout)")
+        // `never` must NOT have been consumed as a positional path.
+        #expect(!r.stderr.contains("never"))
+    }
+
+    /// Unknown `--color` values must be rejected with an argument
+    /// error. Regression: PR #38 review — typos like `--color nope`
+    /// previously fell through to `.auto` silently.
+    @Test func colorRejectsUnknownValue() async throws {
+        let r = try await run(["--color", "nope"], in: [
+            "a.txt": "x",
+        ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.exit == 2)
+        #expect(r.stderr.contains("--color"))
+    }
 }
