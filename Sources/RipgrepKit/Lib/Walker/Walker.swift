@@ -168,6 +168,19 @@ public struct Walker: Sendable {
         var insideVcsRepo: Bool = false
     }
 
+    /// Iterate `directory`'s children, recurse into descendants the
+    /// filter slice keeps. The caller (fd / rg entry points) is
+    /// responsible for calling `Shell.authorize` on each start root;
+    /// once that passes, every child this method emits is a
+    /// realpath-descendant of the authorized root (the walker does not
+    /// follow symlinks by default — `options.followSymlinks` is the
+    /// opt-in escape hatch), so per-entry authorization would be
+    /// redundant under a `Sandbox.rooted(at:)` policy.
+    ///
+    /// If an embedder ever needs per-entry gating (e.g. a sandbox with
+    /// multiple disjoint regions, or one that translates virtual ↔ host
+    /// paths and so can't be expressed as a single root prefix),
+    /// `FileManager.contentsOfDirectory(at:...)` is the place to add it.
     private func descend(
         directory: URL,
         relative: String,
