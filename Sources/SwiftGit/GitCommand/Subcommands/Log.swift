@@ -48,53 +48,17 @@ struct Log: AsyncParsableCommand {
     var rest: [String] = []
 
     func run() async throws {
-        // ArgumentParser's `.captureForPassthrough` strategy stops
-        // recognising options once the first positional appears, so a
-        // user typing `git log HEAD~2..HEAD --oneline` would have
-        // `--oneline` stuck in `rest`. Walk `rest` and pull our known
-        // flags back out before splitting refs/paths.
-        var positionals: [String] = []
-        var pulledOneline = oneline
-        var pulledStat = stat
-        var pulledPatch = patch
-        var pulledFormat = format
-        // Entry.swift's argv preprocessor converts real-git's `-<n>`
-        // shorthand into `-n <n>` before ArgumentParser sees it. That
-        // path doesn't fire when `git` is invoked as a SwiftBash
-        // builtin (the bridge calls `parseAsRoot` directly), so the
-        // shorthand also has to be recognised here.
-        var pulledMaxCount = maxCount
-        var i = 0
-        while i < rest.count {
-            let tok = rest[i]
-            if tok == "--oneline" { pulledOneline = true; i += 1; continue }
-            if tok == "--stat" { pulledStat = true; i += 1; continue }
-            if tok == "--patch" || tok == "-p" { pulledPatch = true; i += 1; continue }
-            if tok.hasPrefix("--format=") {
-                pulledFormat = String(tok.dropFirst("--format=".count))
-                i += 1; continue
-            }
-            if tok == "--format", i + 1 < rest.count {
-                pulledFormat = rest[i + 1]
-                i += 2; continue
-            }
-            if tok.count > 1, tok.hasPrefix("-"),
-               tok.dropFirst().allSatisfy(\.isNumber),
-               let count = Int(tok.dropFirst()) {
-                pulledMaxCount = count
-                i += 1
-                continue
-            }
-            positionals.append(tok)
-            i += 1
-        }
-        let useOneline = pulledOneline
-        let useStat = pulledStat
-        let usePatch = pulledPatch
-        let useFormat = pulledFormat
-        let limit = pulledMaxCount
+        let pulled = Self.pullPassthrough(
+            rest: rest,
+            oneline: oneline, stat: stat, patch: patch,
+            format: format, maxCount: maxCount)
+        let useOneline = pulled.oneline
+        let useStat = pulled.stat
+        let usePatch = pulled.patch
+        let useFormat = pulled.format
+        let limit = pulled.maxCount
 
-        let (refTokens, paths) = Self.splitOnDoubleDash(positionals)
+        let (refTokens, paths) = Self.splitOnDoubleDash(pulled.positionals)
         let (starts, excludes) = try Self.expandRefs(refTokens)
 
         let client = CommandContext.gitClient()
@@ -158,6 +122,77 @@ struct Log: AsyncParsableCommand {
             // bars + summary), not shortstat.
             return try await client.diff(target, format: .stat)
         }
+    }
+
+    /// Outputs of `pullPassthrough` — the resolved flag values and the
+    /// positional residue that remains to be split on `--` and parsed
+    /// as refs / pathspecs.
+    struct PullResult: Equatable {
+        var oneline: Bool
+        var stat: Bool
+        var patch: Bool
+        var format: String?
+        var maxCount: Int?
+        var positionals: [String]
+    }
+
+    /// ArgumentParser's `.captureForPassthrough` strategy stops
+    /// recognising options once the first positional appears, so a
+    /// user typing `git log HEAD~2..HEAD --oneline` ends up with
+    /// `--oneline` stuck in `rest`. Walk `rest` and pull our known
+    /// flags back out before splitting refs/paths.
+    ///
+    /// Entry.swift's argv preprocessor converts real-git's `-<n>`
+    /// shorthand into `-n <n>` before ArgumentParser sees it. That
+    /// path doesn't fire when `git` runs as a SwiftBash builtin (the
+    /// bridge calls `parseAsRoot` directly), so the shorthand is
+    /// recognised here as well.
+    ///
+    /// Real git stops interpreting flags at `--`; everything after is
+    /// a pathspec. Mirror that so `git log -- -1` keeps `-1` as a path
+    /// filter instead of being swallowed as `--max-count=1`.
+    static func pullPassthrough(
+        rest: [String],
+        oneline: Bool, stat: Bool, patch: Bool,
+        format: String?, maxCount: Int?
+    ) -> PullResult {
+        var result = PullResult(
+            oneline: oneline, stat: stat, patch: patch,
+            format: format, maxCount: maxCount, positionals: [])
+        var seenDoubleDash = false
+        var i = 0
+        while i < rest.count {
+            let tok = rest[i]
+            if tok == "--" {
+                seenDoubleDash = true
+                result.positionals.append(tok)
+                i += 1
+                continue
+            }
+            if !seenDoubleDash {
+                if tok == "--oneline" { result.oneline = true; i += 1; continue }
+                if tok == "--stat" { result.stat = true; i += 1; continue }
+                if tok == "--patch" || tok == "-p" { result.patch = true; i += 1; continue }
+                if tok.hasPrefix("--format=") {
+                    result.format = String(tok.dropFirst("--format=".count))
+                    i += 1; continue
+                }
+                if tok == "--format", i + 1 < rest.count {
+                    result.format = rest[i + 1]
+                    i += 2; continue
+                }
+                if tok.count > 1, tok.hasPrefix("-"),
+                   tok.dropFirst().allSatisfy(\.isNumber),
+                   let count = Int(tok.dropFirst()) {
+                    result.maxCount = count
+                    i += 1
+                    continue
+                }
+            }
+            result.positionals.append(tok)
+            i += 1
+        }
+        return result
     }
 
     /// Real-git's `<a>..<b>` / `<a>...<b>` notation expanded to push +
