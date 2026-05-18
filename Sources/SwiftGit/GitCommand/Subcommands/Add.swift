@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import ShellKit
 import SwiftGit
 
 struct Add: AsyncParsableCommand {
@@ -53,8 +54,21 @@ struct Add: AsyncParsableCommand {
         let cwd = CommandContext.currentDirectory
         var ignored: [String] = []
         for path in paths {
-            let resolved = URL(fileURLWithPath: path, relativeTo: cwd).path
-            if !FileManager.default.fileExists(atPath: resolved) {
+            let resolvedURL = URL(fileURLWithPath: path, relativeTo: cwd)
+            // Gate the user-supplied pathspec through the active
+            // sandbox. A denied path is reported the same as a missing
+            // one — real git says `did not match any files` in both
+            // shapes, and the sandbox-leak protection in
+            // `Sandbox.Denial.description` keeps the host path out of
+            // the diagnostic.
+            do {
+                try await Shell.authorize(resolvedURL)
+            } catch is Sandbox.Denial {
+                throw CLIError.stderr(
+                    "fatal: pathspec '\(path)' did not match any files",
+                    exitCode: 128)
+            }
+            if !FileManager.default.fileExists(atPath: resolvedURL.path) {
                 throw CLIError.stderr(
                     "fatal: pathspec '\(path)' did not match any files",
                     exitCode: 128)

@@ -54,6 +54,16 @@ struct Clean: AsyncParsableCommand {
             // Real git prints a per-file `Removing <path>` line.
             Shell.print("Removing \(entry.path)")
             if !dryRun {
+                // Gate through the active sandbox before deleting.
+                // `report.untrackedEntries` comes from a workdir status
+                // walk so the path is conceptually in-tree, but
+                // `removeItem(at:)` is real I/O that the embedder may
+                // want to confine (e.g. a read-only sandbox).
+                do {
+                    try await Shell.authorize(abs)
+                } catch is Sandbox.Denial {
+                    continue
+                }
                 try? fm.removeItem(at: abs)
             }
         }

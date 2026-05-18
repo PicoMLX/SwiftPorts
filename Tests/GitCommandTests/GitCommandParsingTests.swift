@@ -605,6 +605,19 @@ struct GitCommandParsingTests {
         #expect(cmd.maxCount == 3)
     }
 
+    @Test("log: bare -1 captured as passthrough (Entry.swift would rewrite)")
+    func logDashOneLandsInRest() throws {
+        // When `git log -1` is invoked as a standalone binary, the
+        // Entry preprocessor rewrites `-1` → `-n 1` before parsing.
+        // When it's invoked as a SwiftBash builtin (parseAsRoot is
+        // called directly), `-1` is captured into `rest` for `run()`
+        // to re-interpret. Verify the latter shape so the run-time
+        // pull-out logic in Log.run has something to find.
+        let cmd = try parse(["log", "--oneline", "-1"], as: Log.self)
+        #expect(cmd.oneline == true)
+        #expect(cmd.rest == ["-1"])
+    }
+
     @Test("log: --format passes through")
     func logFormatParse() throws {
         let cmd = try parse(["log", "--format", "%H%n%s"], as: Log.self)
@@ -637,6 +650,41 @@ struct GitCommandParsingTests {
         let (refs, paths) = Log.splitOnDoubleDash(["HEAD", "--", "a.txt"])
         #expect(refs == ["HEAD"])
         #expect(paths == ["a.txt"])
+    }
+
+    @Test("log: pullPassthrough — -<n> pulled before --")
+    func logPullPassthroughDashNBeforeDoubleDash() throws {
+        let result = Log.pullPassthrough(
+            rest: ["--oneline", "-1"],
+            oneline: false, stat: false, patch: false,
+            format: nil, maxCount: nil)
+        #expect(result.oneline == true)
+        #expect(result.maxCount == 1)
+        #expect(result.positionals.isEmpty)
+    }
+
+    @Test("log: pullPassthrough — -<n> after -- stays as path")
+    func logPullPassthroughDashNAfterDoubleDash() throws {
+        // `git log -- -1` filters to a file literally named `-1`; the
+        // `-<n>` shorthand must not be applied past the `--` separator.
+        let result = Log.pullPassthrough(
+            rest: ["--", "-1"],
+            oneline: false, stat: false, patch: false,
+            format: nil, maxCount: nil)
+        #expect(result.maxCount == nil)
+        #expect(result.positionals == ["--", "-1"])
+    }
+
+    @Test("log: pullPassthrough — flag-shaped path after -- stays as path")
+    func logPullPassthroughFlagShapedPathAfterDoubleDash() throws {
+        // Any flag-shaped token after `--` is a pathspec, not a flag.
+        let result = Log.pullPassthrough(
+            rest: ["HEAD", "--", "--oneline", "--stat"],
+            oneline: false, stat: false, patch: false,
+            format: nil, maxCount: nil)
+        #expect(result.oneline == false)
+        #expect(result.stat == false)
+        #expect(result.positionals == ["HEAD", "--", "--oneline", "--stat"])
     }
 
     @Test("tag: bare lists")
