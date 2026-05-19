@@ -9,7 +9,7 @@ struct RunCancel: AsyncParsableCommand {
         commandName: "cancel",
         abstract: "Cancel an in-progress workflow run."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Run ID.") var id: Int
 
     func run() async throws {
@@ -27,7 +27,7 @@ struct RunRerun: AsyncParsableCommand {
         commandName: "rerun",
         abstract: "Rerun a workflow run."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Run ID.") var id: Int
     @Flag(name: .customLong("failed"),
           help: "Rerun only the failed jobs.")
@@ -49,7 +49,7 @@ struct RunDelete: AsyncParsableCommand {
         commandName: "delete",
         abstract: "Delete a workflow run."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Run ID.") var id: Int
     @Flag(name: [.short, .customLong("yes")]) var skipPrompt: Bool = false
 

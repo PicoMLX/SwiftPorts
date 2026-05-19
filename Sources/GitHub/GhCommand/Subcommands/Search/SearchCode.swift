@@ -19,7 +19,7 @@ struct SearchCode: AsyncParsableCommand {
     @Option(name: [.short, .customLong("limit")], help: "Maximum results.")
     var limit: Int = 30
 
-    @Option(name: [.short, .long],
+    @Option(name: [.customShort("R"), .long],
             help: "Filter to a specific repo (OWNER/NAME).")
     var repo: String?
 

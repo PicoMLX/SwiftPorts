@@ -10,7 +10,7 @@ struct RepoArchive: AsyncParsableCommand {
         abstract: "Archive a repository (read-only)."
     )
 
-    @Option(name: [.short, .long],
+    @Option(name: [.customShort("R"), .long],
             help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
     var repo: RepositoryReference?
 
@@ -39,7 +39,7 @@ struct RepoUnarchive: AsyncParsableCommand {
         abstract: "Restore a repository from archived state."
     )
 
-    @Option(name: [.short, .long],
+    @Option(name: [.customShort("R"), .long],
             help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
     var repo: RepositoryReference?
 

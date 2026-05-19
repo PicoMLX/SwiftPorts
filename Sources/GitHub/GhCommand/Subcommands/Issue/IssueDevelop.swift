@@ -10,7 +10,7 @@ struct IssueDevelop: AsyncParsableCommand {
         abstract: "Create a branch on the repo linked to an issue."
     )
 
-    @Option(name: [.short, .long],
+    @Option(name: [.customShort("R"), .long],
             help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
     var repo: RepositoryReference?
 
