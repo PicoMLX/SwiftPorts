@@ -9,7 +9,7 @@ struct LabelCreate: AsyncParsableCommand {
         commandName: "create",
         abstract: "Create a new label."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Label name.") var name: String
     @Option(name: [.short, .customLong("color")],
             help: "Hex color without # (e.g. ff0000).")
@@ -38,7 +38,7 @@ struct LabelEdit: AsyncParsableCommand {
         commandName: "edit",
         abstract: "Edit a label."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Existing label name.") var name: String
     @Option(name: .customLong("name"), help: "New name.") var newName: String?
     @Option(name: [.short, .customLong("color")]) var color: String?
@@ -69,7 +69,7 @@ struct LabelDelete: AsyncParsableCommand {
         commandName: "delete",
         abstract: "Delete a label."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Label name.") var name: String
     @Flag(name: [.short, .customLong("yes")]) var skipPrompt: Bool = false
 

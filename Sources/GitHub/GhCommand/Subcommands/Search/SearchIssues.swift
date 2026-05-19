@@ -60,7 +60,7 @@ struct SearchIssuesCommand: AsyncParsableCommand {
     @Option(name: [.short, .customLong("limit")]) var limit: Int = 30
     @Option(name: .long, help: "Filter by state (open / closed).") var state: String?
     @Option(name: .long, help: "Filter by author.") var author: String?
-    @Option(name: [.short, .long], help: "Filter to a specific repo (OWNER/NAME).") var repo: String?
+    @Option(name: [.customShort("R"), .long], help: "Filter to a specific repo (OWNER/NAME).") var repo: String?
     @Option(name: .long,
             help: "Output JSON with the specified fields (comma-separated).")
     var json: String?
@@ -83,7 +83,7 @@ struct SearchPrsCommand: AsyncParsableCommand {
     @Option(name: [.short, .customLong("limit")]) var limit: Int = 30
     @Option(name: .long, help: "Filter by state (open / closed / merged).") var state: String?
     @Option(name: .long, help: "Filter by author.") var author: String?
-    @Option(name: [.short, .long], help: "Filter to a specific repo (OWNER/NAME).") var repo: String?
+    @Option(name: [.customShort("R"), .long], help: "Filter to a specific repo (OWNER/NAME).") var repo: String?
     @Option(name: .long,
             help: "Output JSON with the specified fields (comma-separated).")
     var json: String?

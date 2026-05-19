@@ -44,7 +44,7 @@ struct SecretList: AsyncParsableCommand {
         commandName: "list",
         abstract: "List secret names (values are write-only)."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: .customLong("scope")) var scope: String = "actions"
 
     func run() async throws {
@@ -67,7 +67,7 @@ struct SecretDelete: AsyncParsableCommand {
         commandName: "delete",
         abstract: "Delete a secret."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: .customLong("scope")) var scope: String = "actions"
     @Argument(help: "Secret name.") var name: String
 

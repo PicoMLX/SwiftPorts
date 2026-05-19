@@ -38,7 +38,7 @@ struct VariableList: AsyncParsableCommand {
         commandName: "list",
         abstract: "List repository variables."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: .customLong("scope"),
             help: "actions (default), codespaces, dependabot")
     var scope: String = "actions"
@@ -62,7 +62,7 @@ struct VariableGet: AsyncParsableCommand {
         commandName: "get",
         abstract: "Print one variable's value."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: .customLong("scope")) var scope: String = "actions"
     @Argument(help: "Variable name.") var name: String
 
@@ -80,7 +80,7 @@ struct VariableSet: AsyncParsableCommand {
         commandName: "set",
         abstract: "Set (create or update) a variable."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: .customLong("scope")) var scope: String = "actions"
     @Argument(help: "Variable name.") var name: String
     @Option(name: [.short, .customLong("body")],
@@ -123,7 +123,7 @@ struct VariableDelete: AsyncParsableCommand {
         commandName: "delete",
         abstract: "Delete a variable."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: .customLong("scope")) var scope: String = "actions"
     @Argument(help: "Variable name.") var name: String
 

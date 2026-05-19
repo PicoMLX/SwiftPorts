@@ -10,7 +10,7 @@ struct WorkflowRunDispatch: AsyncParsableCommand {
         abstract: "Trigger a workflow_dispatch event."
     )
 
-    @Option(name: [.short, .long],
+    @Option(name: [.customShort("R"), .long],
             help: "Repository as OWNER/REPO. Defaults to the current directory's git remote.")
     var repo: RepositoryReference?
 
@@ -62,7 +62,7 @@ struct WorkflowEnable: AsyncParsableCommand {
         commandName: "enable",
         abstract: "Enable a previously disabled workflow."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Workflow ID or filename.") var workflow: String
 
     func run() async throws {
@@ -80,7 +80,7 @@ struct WorkflowDisable: AsyncParsableCommand {
         commandName: "disable",
         abstract: "Disable a workflow."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Argument(help: "Workflow ID or filename.") var workflow: String
 
     func run() async throws {

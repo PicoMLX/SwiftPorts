@@ -32,7 +32,7 @@ struct CacheList: AsyncParsableCommand {
         commandName: "list",
         abstract: "List Actions caches in a repository."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: [.short, .customLong("limit")]) var limit: Int = 30
 
     func run() async throws {
@@ -58,7 +58,7 @@ struct CacheDelete: AsyncParsableCommand {
         commandName: "delete",
         abstract: "Delete an Actions cache by ID or by key."
     )
-    @Option(name: [.short, .long]) var repo: RepositoryReference?
+    @Option(name: [.customShort("R"), .long]) var repo: RepositoryReference?
     @Option(name: .customLong("key"),
             help: "Delete every cache matching this key (instead of by ID).")
     var key: String?
