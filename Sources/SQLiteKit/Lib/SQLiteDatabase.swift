@@ -73,6 +73,7 @@ public final class SQLiteDatabase {
 
     public var lastInsertRowID: Int64 { sqlite3_last_insert_rowid(handle) }
     public var changes: Int { Int(sqlite3_changes(handle)) }
+    public var totalChanges: Int { Int(sqlite3_total_changes(handle)) }
 
     // MARK: Running SQL
 

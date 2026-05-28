@@ -15,6 +15,8 @@ enum Parser {
         var nullValue = ""
         var readonly = false
         var interactive = false
+        var echo = false
+        var bail = false
         var initFile: String?
         var commands: [String] = []
         var special: Special = .none
@@ -59,6 +61,8 @@ enum Parser {
             case "-readonly": options.readonly = true
             case "-batch": options.interactive = false
             case "-interactive": options.interactive = true
+            case "-echo": options.echo = true
+            case "-bail": options.bail = true
             case "-separator": options.separator = try value(for: arg)
             case "-nullvalue": options.nullValue = try value(for: arg)
             case "-init": options.initFile = try value(for: arg)
@@ -92,8 +96,10 @@ enum Parser {
       -readonly          open the database read-only
       -init FILE         run FILE before reading the main input
       -cmd COMMAND       run COMMAND before reading the main input
-      -batch             stop on the first error (default)
-      -interactive       keep going after an error
+      -echo              print each statement before running it
+      -bail              stop after the first error
+      -batch             non-interactive mode
+      -interactive       interactive mode
 
       -list              values separated by .separator (default)
       -csv               comma-separated values
@@ -122,6 +128,10 @@ enum Parser {
       .separator SEP     set the -list separator
       .nullvalue STR     set the NULL placeholder
       .dump [TABLE]      dump the database (or one table) as SQL
+      .echo on|off       echo each statement before running it
+      .bail on|off       stop after an error
+      .changes on|off    report changed-row counts after each statement
+      .print TEXT...     print TEXT
       .read FILE         run SQL from FILE
       .open FILE         close the current database and open FILE
       .show              show current settings

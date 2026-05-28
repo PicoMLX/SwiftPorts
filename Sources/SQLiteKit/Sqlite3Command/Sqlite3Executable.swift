@@ -72,7 +72,9 @@ public enum Sqlite3Executable {
             stdout: stdout,
             stderr: stderr,
             interactive: options.interactive,
-            headerExplicit: options.headerExplicit)
+            headerExplicit: options.headerExplicit,
+            echo: options.echo,
+            bail: options.bail)
 
         // -init FILE, then any -cmd commands, before the main input.
         if let initFile = options.initFile {
@@ -111,6 +113,9 @@ final class Session {
     /// Whether the user pinned headers via `-header`/`-noheader`/`.headers`.
     /// Until they do, `.mode column` turns headers on (matching sqlite3).
     private var headerExplicit: Bool
+    private var echo: Bool
+    private var bail: Bool
+    private var changesMode = false
 
     private(set) var shouldQuit = false
     private(set) var exitCode: Int32 = 0
@@ -121,13 +126,17 @@ final class Session {
          stdout: OutputSink,
          stderr: OutputSink,
          interactive: Bool,
-         headerExplicit: Bool) {
+         headerExplicit: Bool,
+         echo: Bool,
+         bail: Bool) {
         self.database = database
         self.formatter = formatter
         self.stdout = stdout
         self.stderr = stderr
         self.interactive = interactive
         self.headerExplicit = headerExplicit
+        self.echo = echo
+        self.bail = bail
     }
 
     private func out(_ s: String) { stdout.write(s) }
@@ -141,12 +150,16 @@ final class Session {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var lineNo = 0
         var statementStart = 1
+        // Command-line SQL bails on the first error; a script keeps going
+        // unless `.bail on` is set (matching sqlite3).
+        func stopsOnError() -> Bool { context == .inline || bail }
         for line in lines {
             if shouldQuit { return true }
             lineNo += 1
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Dot-commands are only recognized at a statement boundary.
             if buffer.isEmpty && trimmed.hasPrefix(".") {
+                if echo { out(trimmed + "\n") }
                 await handleDot(trimmed)
                 continue
             }
@@ -155,7 +168,7 @@ final class Session {
             if SQLiteDatabase.isCompleteStatement(buffer) {
                 let sql = buffer
                 buffer = ""
-                if !runStatement(sql, startLine: statementStart, context: context) && !interactive {
+                if !runStatement(sql, startLine: statementStart, context: context) && stopsOnError() {
                     return false
                 }
             }
@@ -164,7 +177,7 @@ final class Session {
         let leftover = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         buffer = ""
         if !leftover.isEmpty {
-            if !runStatement(leftover, startLine: statementStart, context: context) && !interactive {
+            if !runStatement(leftover, startLine: statementStart, context: context) && stopsOnError() {
                 return false
             }
         }
@@ -175,9 +188,13 @@ final class Session {
     /// on error (after reporting it).
     @discardableResult
     private func runStatement(_ sql: String, startLine: Int, context: SourceContext) -> Bool {
+        if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
         do {
             for set in try database.evaluate(sql) {
                 out(formatter.render(set))
+            }
+            if changesMode {
+                out("changes: \(database.changes)   total_changes: \(database.totalChanges)\n")
             }
             return true
         } catch let error as SQLiteError {
@@ -345,6 +362,18 @@ final class Session {
         case ".nullvalue":
             formatter.nullValue = args.first ?? ""
 
+        case ".echo":
+            if let value = Self.onOff(args.first) { echo = value }
+
+        case ".bail":
+            if let value = Self.onOff(args.first) { bail = value }
+
+        case ".changes":
+            if let value = Self.onOff(args.first) { changesMode = value }
+
+        case ".print":
+            out(args.joined(separator: " ") + "\n")
+
         case ".show":
             let settings = [
                 "     mode: \(formatter.mode.rawValue)",
@@ -419,6 +448,15 @@ final class Session {
     }
 
     // MARK: Small helpers
+
+    /// Parses an on/off argument; returns nil for an unrecognized value.
+    private static func onOff(_ value: String?) -> Bool? {
+        switch value?.lowercased() {
+        case "on", "1", "yes", "true": return true
+        case "off", "0", "no", "false": return false
+        default: return nil
+        }
+    }
 
     /// Splits a dot-command line into tokens, honoring double quotes.
     private static func tokenize(_ line: String) -> [String] {

@@ -62,6 +62,38 @@ import Testing
         #expect(r.stdout == "[{\"b\":\"\\u0000\\u00ff\"}]\n")
     }
 
+    @Test func dotPrint() async throws {
+        let r = try await run([":memory:"], input: ".print hello world\n.print \"quoted arg\"\n")
+        #expect(r.stdout == "hello world\nquoted arg\n")
+    }
+
+    @Test func dotEcho() async throws {
+        let r = try await run([":memory:"], input: ".echo on\n.headers on\nSELECT 1 AS a;\n")
+        #expect(r.stdout == ".headers on\nSELECT 1 AS a;\na\n1\n")
+    }
+
+    @Test func dotChanges() async throws {
+        let r = try await run([":memory:"],
+            input: ".changes on\nCREATE TABLE t(x);\nINSERT INTO t VALUES(1),(2),(3);\n")
+        #expect(r.stdout.contains("changes: 0   total_changes: 0"))
+        #expect(r.stdout.contains("changes: 3   total_changes: 3"))
+    }
+
+    @Test func scriptContinuesAfterError() async throws {
+        // A script keeps going after an error (exit 1), matching sqlite3.
+        let r = try await run([":memory:"], input: "SELECT * FROM nope;\nSELECT 99;\n")
+        #expect(r.exit == 1)
+        #expect(r.stdout == "99\n")
+        #expect(r.stderr.contains("no such table: nope"))
+    }
+
+    @Test func bailStopsAfterError() async throws {
+        let r = try await run([":memory:"], input: ".bail on\nSELECT * FROM nope;\nSELECT 99;\n")
+        #expect(r.exit == 1)
+        #expect(r.stdout == "")
+        #expect(r.stderr.contains("no such table: nope"))
+    }
+
     @Test func boxFlag() async throws {
         let r = try await run(["-box", ":memory:", "SELECT 1 AS a;"])
         #expect(r.stdout == "┌───┐\n│ a │\n├───┤\n│ 1 │\n└───┘\n")
