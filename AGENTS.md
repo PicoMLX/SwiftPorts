@@ -48,18 +48,21 @@ swift run sqlite3 ...                     # SQLite shell (vendored amalgamation)
 GitHub Actions workflow at `.github/workflows/swift.yml` runs on push
 to `main` and PRs. Matrix:
 
-- **macOS** — `macos-15` runner, `swift build && swift test`
-- **iOS Simulator** — same runner, `xcodebuild` against the auto-generated
+- **macOS** — `macos-latest` runner (Xcode 26), `swift build && swift test`
+- **iOS Simulator** — same runner, `xcodebuild test` against the auto-generated
   `SwiftPorts-Package` umbrella scheme
-- **Linux** — `swift:6.0-jammy` Docker image
-- **Windows** — `windows-latest` + `SwiftyLab/setup-swift`
-  (`continue-on-error` until libgit2 builds cleanly there)
-- **Android** — `skiptools/swift-android-action`
-  (`continue-on-error`, same caveat)
+- **Linux** — `swift:6.2-jammy` container, full `swift build && swift test`
+- **Windows** — `windows-latest` + `SwiftyLab/setup-swift`, full
+  `swift build --build-tests` + `swift test` (libgit2 C deps via vcpkg)
+- **Android** — `ubuntu-latest` + `skiptools/swift-android-action`; builds an
+  **explicit list of library targets** with the Swift Android SDK (no
+  on-device tests)
 
-The Windows + Android jobs are stretch goals — `ibrahimcetin/libgit2`
-1.9.x doesn't advertise official support and the C build path needs
-platform-specific defines we haven't tuned yet.
+All five jobs are required — none use `continue-on-error`, so any failure
+blocks the PR. (Windows + Android were once stretch goals; they now build
+cleanly across the matrix.) Note: the Android job builds a hand-maintained
+target list, so a **new library target must be added to that loop** in
+`swift.yml` or it won't be covered there.
 
 ## Layout — umbrella convention
 
