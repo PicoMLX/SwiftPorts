@@ -1,0 +1,116 @@
+import Foundation
+import SQLiteKit
+
+/// Hand-rolled argv parser for the `sqlite3` CLI. SQLite uses single-dash
+/// long options (`-csv`, `-header`, `-separator X`), which ArgumentParser
+/// can't express, so — like the `rg` / `fd` ports — we parse argv directly.
+enum Parser {
+    struct Options {
+        var databasePath: String?
+        var sql: [String] = []
+        var mode: OutputMode = .list
+        var showHeader = false
+        var headerExplicit = false
+        var separator = "|"
+        var nullValue = ""
+        var readonly = false
+        var interactive = false
+        var initFile: String?
+        var commands: [String] = []
+        var special: Special = .none
+    }
+
+    enum Special { case none, help, version }
+
+    struct ArgError: Error { let message: String }
+
+    static func parse(_ argv: [String]) throws -> Options {
+        var options = Options()
+        var positionals: [String] = []
+        var i = 0
+
+        func value(for flag: String) throws -> String {
+            guard i + 1 < argv.count else {
+                throw ArgError(message: "option requires an argument: \(flag)")
+            }
+            i += 1
+            return argv[i]
+        }
+
+        while i < argv.count {
+            let arg = argv[i]
+            switch arg {
+            case "-help", "--help", "-?": options.special = .help
+            case "-version", "--version": options.special = .version
+            case "-csv": options.mode = .csv
+            case "-json": options.mode = .json
+            case "-line": options.mode = .line
+            case "-column": options.mode = .column
+            case "-list": options.mode = .list
+            case "-header", "-headers": options.showHeader = true; options.headerExplicit = true
+            case "-noheader", "-noheaders": options.showHeader = false; options.headerExplicit = true
+            case "-readonly": options.readonly = true
+            case "-batch": options.interactive = false
+            case "-interactive": options.interactive = true
+            case "-separator": options.separator = try value(for: arg)
+            case "-nullvalue": options.nullValue = try value(for: arg)
+            case "-init": options.initFile = try value(for: arg)
+            case "-cmd": options.commands.append(try value(for: arg))
+            default:
+                if arg.hasPrefix("-") && arg.count > 1 {
+                    throw ArgError(message: "unknown option: \(arg)")
+                }
+                positionals.append(arg)
+            }
+            i += 1
+        }
+
+        if let first = positionals.first {
+            options.databasePath = first
+            options.sql = Array(positionals.dropFirst())
+        }
+        return options
+    }
+
+    static let helpText = """
+    Usage: sqlite3 [OPTIONS] FILENAME [SQL]
+
+    FILENAME is the SQLite database to open. Omit it (or use ":memory:")
+    for a transient in-memory database. A trailing SQL argument runs and
+    then exits; otherwise SQL is read from standard input.
+
+    OPTIONS:
+      -version           show the SQLite library version and exit
+      -help              show this message and exit
+      -readonly          open the database read-only
+      -init FILE         run FILE before reading the main input
+      -cmd COMMAND       run COMMAND before reading the main input
+      -batch             stop on the first error (default)
+      -interactive       keep going after an error
+
+      -list              values separated by .separator (default)
+      -csv               comma-separated values
+      -column            left-aligned columns
+      -line              one value per line
+      -json              JSON array of objects
+      -header / -noheader  show or hide column headers
+      -separator SEP     field separator for -list mode (default "|")
+      -nullvalue STR     text to print for NULL values (default "")
+
+    Dot-commands (at a statement boundary):
+      .tables [PATTERN]  list tables and views
+      .schema [TABLE]    show CREATE statements
+      .databases         list attached databases
+      .indexes [TABLE]   list indexes
+      .mode MODE         set output mode (list/csv/line/column/json)
+      .headers on|off    show or hide headers
+      .separator SEP     set the -list separator
+      .nullvalue STR     set the NULL placeholder
+      .read FILE         run SQL from FILE
+      .open FILE         close the current database and open FILE
+      .show              show current settings
+      .help              show this message
+      .quit / .exit      exit
+
+    """
+}

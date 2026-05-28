@@ -98,6 +98,16 @@ let package = Package(
         .library(name: "JqCommand", targets: ["JqCommand"]),
         .executable(name: "jq", targets: ["jq"]),
 
+        // SQLiteKit umbrella — `sqlite3` shell port over the vendored
+        // SQLite amalgamation. The SDK + command libraries link the C
+        // engine and so run everywhere it builds (macOS / iOS / tvOS /
+        // watchOS / visionOS / Linux); the `sqlite3` executable is the
+        // valuable artifact on macOS / Linux (Apple-mobile builds it as a
+        // never-invoked stub, like the rest of our CLIs).
+        .library(name: "SQLiteKit", targets: ["SQLiteKit"]),
+        .library(name: "Sqlite3Command", targets: ["Sqlite3Command"]),
+        .executable(name: "sqlite3", targets: ["sqlite3"]),
+
         // GlamKit umbrella — Glamour-compatible Markdown→ANSI renderer.
         // Pure-Swift port of charmbracelet/glamour built on apple/swift-
         // markdown. Honors `GLAMOUR_STYLE`, terminal capability (TERM /
@@ -205,6 +215,15 @@ let package = Package(
         // ANSI-side benefit.
         .package(url: "https://github.com/swiftlang/swift-markdown",
                  from: "0.7.0"),
+
+        // Vendored SQLite amalgamation — a single public-domain
+        // `sqlite3.c` packaged as a SwiftPM C target, consumed the same
+        // way as the libgit2 fork above (depend on the package, don't host
+        // the 8.9 MB blob in this repo). Backs the SQLiteKit umbrella.
+        // Pinned exact so the engine version is identical on every
+        // platform (issue #43).
+        .package(url: "https://github.com/stephencelis/CSQLite",
+                 exact: "3.50.4"),
     ],
     targets: [
         // MARK: ForgeKit (host-agnostic plumbing)
@@ -904,6 +923,48 @@ let package = Package(
         .testTarget(
             name: "FdTests",
             dependencies: ["FdCommand", "FdKit", "RipgrepKit"]
+        ),
+
+        // MARK: SQLiteKit umbrella (issue #43)
+        // `sqlite3` shell port. The SDK (SQLiteKit) is a thin wrapper over
+        // the vendored amalgamation; Sqlite3Command holds the argv parser,
+        // dot-command dispatch, and REPL; `sqlite3` is the @main wrapper.
+        // The Linux/Android link libs match the (commented) shell target
+        // in the CSQLite package; the Apple SDKs provide these via
+        // libSystem, so they're gated to non-Apple platforms.
+        .target(
+            name: "SQLiteKit",
+            dependencies: [
+                .product(name: "SQLiteSwiftCSQLite", package: "CSQLite"),
+            ],
+            path: "Sources/SQLiteKit/Lib",
+            linkerSettings: [
+                .linkedLibrary("m", .when(platforms: [.linux, .android])),
+                .linkedLibrary("dl", .when(platforms: [.linux, .android])),
+                .linkedLibrary("pthread", .when(platforms: [.linux, .android])),
+            ]
+        ),
+        .target(
+            name: "Sqlite3Command",
+            dependencies: [
+                "SQLiteKit",
+                .product(name: "ShellKit", package: "ShellKit"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/SQLiteKit/Sqlite3Command"
+        ),
+        .executableTarget(
+            name: "sqlite3",
+            dependencies: ["Sqlite3Command"],
+            path: "Sources/SQLiteKit/sqlite3"
+        ),
+        .testTarget(
+            name: "SQLiteKitTests",
+            dependencies: ["SQLiteKit"]
+        ),
+        .testTarget(
+            name: "Sqlite3Tests",
+            dependencies: ["Sqlite3Command", "SQLiteKit"]
         ),
     ]
 )
