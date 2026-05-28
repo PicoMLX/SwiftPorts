@@ -94,6 +94,64 @@ import Testing
         #expect(r.stderr.contains("no such table: nope"))
     }
 
+    /// Creates a unique temp directory removed at the end of `body`.
+    private func withTempDir(_ body: (URL) async throws -> Void) async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sqlite3-tests-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try await body(dir)
+    }
+
+    @Test func dotOutputRedirectsThenReverts() async throws {
+        try await withTempDir { dir in
+            let file = dir.appendingPathComponent("out.txt")
+            let r = try await run([":memory:"],
+                input: ".output \(file.path)\nSELECT 1;\n.output\nSELECT 2;\n")
+            #expect(r.stdout == "2\n")
+            #expect(try String(contentsOf: file, encoding: .utf8) == "1\n")
+        }
+    }
+
+    @Test func dotOnceRedirectsNextOnly() async throws {
+        try await withTempDir { dir in
+            let file = dir.appendingPathComponent("once.txt")
+            let r = try await run([":memory:"],
+                input: ".once \(file.path)\nSELECT 10;\nSELECT 20;\n")
+            #expect(r.stdout == "20\n")
+            #expect(try String(contentsOf: file, encoding: .utf8) == "10\n")
+        }
+    }
+
+    @Test func dotImportIntoExistingTable() async throws {
+        try await withTempDir { dir in
+            let csv = dir.appendingPathComponent("data.csv")
+            try "1,alice\n\"x,y\",bob\n".write(to: csv, atomically: true, encoding: .utf8)
+            let r = try await run([":memory:"], input: """
+            .mode csv
+            CREATE TABLE t(id,name);
+            .import \(csv.path) t
+            .mode list
+            SELECT id || '/' || name FROM t ORDER BY name;
+            """)
+            #expect(r.stdout == "1/alice\nx,y/bob\n")
+        }
+    }
+
+    @Test func dotImportCreatesTableFromHeader() async throws {
+        try await withTempDir { dir in
+            let csv = dir.appendingPathComponent("data.csv")
+            try "id,name\n1,alice\n2,bob\n".write(to: csv, atomically: true, encoding: .utf8)
+            let r = try await run([":memory:"], input: """
+            .mode csv
+            .import \(csv.path) newt
+            .mode list
+            SELECT id, name FROM newt ORDER BY id;
+            """)
+            #expect(r.stdout == "1|alice\n2|bob\n")
+        }
+    }
+
     @Test func boxFlag() async throws {
         let r = try await run(["-box", ":memory:", "SELECT 1 AS a;"])
         #expect(r.stdout == "┌───┐\n│ a │\n├───┤\n│ 1 │\n└───┘\n")

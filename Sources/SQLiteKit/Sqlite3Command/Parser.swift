@@ -132,6 +132,9 @@ enum Parser {
       .bail on|off       stop after an error
       .changes on|off    report changed-row counts after each statement
       .print TEXT...     print TEXT
+      .import FILE TABLE import delimited FILE into TABLE
+      .output [FILE]     send output to FILE (stdout if omitted)
+      .once FILE         send the next command's output to FILE
       .read FILE         run SQL from FILE
       .open FILE         close the current database and open FILE
       .show              show current settings

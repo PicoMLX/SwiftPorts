@@ -94,6 +94,7 @@ public enum Sqlite3Executable {
             _ = await session.process(input, context: .script)
         }
 
+        session.finishOutput()
         return session.exitCode
     }
 }
@@ -116,6 +117,11 @@ final class Session {
     private var echo: Bool
     private var bail: Bool
     private var changesMode = false
+    /// When set, result output is buffered to a file instead of stdout
+    /// (`.output` / `.once`).
+    private var redirect: Redirect?
+
+    private struct Redirect { let url: URL; var buffer: String; let once: Bool }
 
     private(set) var shouldQuit = false
     private(set) var exitCode: Int32 = 0
@@ -139,8 +145,23 @@ final class Session {
         self.bail = bail
     }
 
-    private func out(_ s: String) { stdout.write(s) }
+    private func out(_ s: String) {
+        if redirect != nil { redirect!.buffer += s } else { stdout.write(s) }
+    }
     private func err(_ s: String) { stderr.write(s) }
+
+    /// Flushes the current `.output`/`.once` redirect to its file and
+    /// reverts to stdout. Called at end of input too.
+    func finishOutput() {
+        guard let active = redirect else { return }
+        redirect = nil
+        do {
+            try active.buffer.write(to: active.url, atomically: true, encoding: .utf8)
+        } catch {
+            err("Error: unable to write \"\(active.url.path)\"\n")
+            exitCode = 1
+        }
+    }
 
     /// Processes a chunk of input (stdin, a SQL argument, a -cmd string, or
     /// a script file), tracking line numbers for error reporting. Returns
@@ -196,6 +217,7 @@ final class Session {
             if changesMode {
                 out("changes: \(database.changes)   total_changes: \(database.totalChanges)\n")
             }
+            if redirect?.once == true { finishOutput() }
             return true
         } catch let error as SQLiteError {
             report(error, sql: sql, startLine: startLine, context: context)
@@ -374,6 +396,38 @@ final class Session {
         case ".print":
             out(args.joined(separator: " ") + "\n")
 
+        case ".output":
+            finishOutput()
+            if let path = args.first {
+                guard let url = await resolveAuthorized(path) else { return }
+                redirect = Redirect(url: url, buffer: "", once: false)
+            }
+
+        case ".once":
+            guard let path = args.first else {
+                err("Error: .once expects a filename\n")
+                return
+            }
+            finishOutput()
+            guard let url = await resolveAuthorized(path) else { return }
+            redirect = Redirect(url: url, buffer: "", once: true)
+
+        case ".import":
+            guard args.count >= 2 else {
+                err("Error: .import expects FILE and TABLE\n")
+                return
+            }
+            guard let url = await resolveAuthorized(args[0]) else { return }
+            let text: String
+            do {
+                text = try String(contentsOf: url, encoding: .utf8)
+            } catch {
+                err("Error: cannot open \"\(args[0])\"\n")
+                exitCode = 1
+                return
+            }
+            importDelimited(text, into: args[1])
+
         case ".show":
             let settings = [
                 "     mode: \(formatter.mode.rawValue)",
@@ -447,7 +501,84 @@ final class Session {
         }
     }
 
+    /// Column separator implied by the current mode (used by `.import`).
+    private func currentColumnSeparator() -> Character {
+        switch formatter.mode {
+        case .csv: return ","
+        case .tabs: return "\t"
+        case .ascii: return "\u{1F}"
+        default: return formatter.separator.first ?? "|"
+        }
+    }
+
+    private func tableExists(_ name: String) throws -> Bool {
+        let sql = "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='\(SQLiteDatabase.quote(name))' LIMIT 1;"
+        return !((try database.evaluate(sql).first?.rows.isEmpty) ?? true)
+    }
+
+    /// Imports delimited rows from `text` into `table`, creating the table
+    /// from the header row (all TEXT columns) when it doesn't yet exist —
+    /// matching sqlite3's `.import`.
+    private func importDelimited(_ text: String, into table: String) {
+        let rows = Self.parseDelimited(text, separator: currentColumnSeparator())
+        guard !rows.isEmpty else { return }
+        let ident = table.replacingOccurrences(of: "\"", with: "\"\"")
+        introspect {
+            var data = rows
+            if try !tableExists(table) {
+                data = Array(rows.dropFirst())
+                let cols = rows[0]
+                    .map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\" TEXT" }
+                    .joined(separator: ", ")
+                // sqlite normalizes "IF NOT EXISTS" out of the stored schema,
+                // so .schema/.dump show `CREATE TABLE "t"(…)`. Real sqlite3's
+                // import retains the prefix in stored text; matching that
+                // would mean bypassing the normalizer — a cosmetic-only diff.
+                try database.evaluate("CREATE TABLE IF NOT EXISTS \"\(ident)\"(\n\(cols));")
+            }
+            for row in data {
+                let values = row
+                    .map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }
+                    .joined(separator: ",")
+                try database.evaluate("INSERT INTO \"\(ident)\" VALUES(\(values));")
+            }
+        }
+    }
+
     // MARK: Small helpers
+
+    /// Parses delimited text — CSV-style: double-quoted fields, `""`
+    /// escapes, embedded separators and newlines — into rows of fields.
+    private static func parseDelimited(_ text: String, separator: Character) -> [[String]] {
+        var rows: [[String]] = []
+        var row: [String] = []
+        var field = ""
+        var inQuotes = false
+        let chars = Array(text)
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if inQuotes {
+                if c == "\"" {
+                    if i + 1 < chars.count && chars[i + 1] == "\"" { field.append("\""); i += 2; continue }
+                    inQuotes = false
+                } else {
+                    field.append(c)
+                }
+            } else {
+                switch c {
+                case "\"": inQuotes = true
+                case separator: row.append(field); field = ""
+                case "\n": row.append(field); rows.append(row); row = []; field = ""
+                case "\r": break
+                default: field.append(c)
+                }
+            }
+            i += 1
+        }
+        if !field.isEmpty || !row.isEmpty { row.append(field); rows.append(row) }
+        return rows
+    }
 
     /// Parses an on/off argument; returns nil for an unrecognized value.
     private static func onOff(_ value: String?) -> Bool? {
