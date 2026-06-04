@@ -243,7 +243,7 @@ let package = Package(
         // branch until v3.8.8 (or later) ships, then move to a `from:`
         // version pin.
         .package(url: "https://github.com/marcprux/swift-archive",
-                 branch: "master",
+                 branch: "swift",
                  traits: [.defaults,
                           "GzipSupport",
                           "Bzip2Support",
