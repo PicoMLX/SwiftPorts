@@ -151,6 +151,32 @@ public final class SQLiteDatabase {
         sqlite3_db_readonly(handle, name) == 1
     }
 
+    /// Reads (or, when `newValue >= 0`, sets and returns the new effective
+    /// value of) a run-time limit — backing the `.limit` dot-command.
+    /// `code` is a `SQLITE_LIMIT_*` constant.
+    @discardableResult
+    public func limit(_ code: Int32, newValue: Int32 = -1) -> Int32 {
+        let prior = sqlite3_limit(handle, code, newValue)
+        // sqlite3_limit returns the PRIOR value; re-read to report the new
+        // (possibly clamped) one after a set.
+        return newValue < 0 ? prior : sqlite3_limit(handle, code, -1)
+    }
+
+    /// The names of `table`'s real (non-generated) columns in declared
+    /// order. `.dump` must SELECT only these so VIRTUAL / STORED generated
+    /// columns are excluded from the emitted `INSERT` — matching sqlite3,
+    /// whose dump emits the bare `INSERT INTO t VALUES(…)` with only the
+    /// storable values (a dump that included generated values can't replay).
+    /// Reads `pragma_table_xinfo`'s `hidden` flag: 2 = VIRTUAL generated,
+    /// 3 = STORED generated (0 / 1 = ordinary / hidden-but-storable).
+    public func nonGeneratedColumns(of table: String) throws -> [String] {
+        let sql = """
+            SELECT name FROM pragma_table_xinfo('\(Self.quote(table))')
+            WHERE hidden NOT IN (2, 3) ORDER BY cid;
+            """
+        return try evaluate(sql).first?.rows.compactMap { $0.first?.text } ?? []
+    }
+
     /// Copies this database into `destination` using SQLite's online backup
     /// API — backing the CLI's `.backup` / `.restore`.
     public func backup(to destination: SQLiteDatabase,

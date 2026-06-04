@@ -48,9 +48,11 @@ import Testing
     }
 
     @Test func csvFlagWithHeader() async throws {
+        // The `-csv` flag emits LF row terminators — sqlite3 reserves CRLF
+        // for the `.mode csv` dot-command (see csvModeUsesCRLF).
         let r = try await run(["-csv", "-header", ":memory:", "SELECT 1 AS a, 'x' AS b;"])
         #expect(r.exit == 0)
-        #expect(r.stdout == "a,b\r\n1,x\r\n")
+        #expect(r.stdout == "a,b\n1,x\n")
     }
 
     @Test func jsonFlag() async throws {
@@ -454,6 +456,96 @@ import Testing
         let r = try await run([":memory:"], input: ".mode csv\n.show\n")
         #expect(r.stdout.contains("colseparator: \",\""))
         #expect(r.stdout.contains("rowseparator: \"\\r\\n\""))
+    }
+
+    // MARK: - Parity batch (issue #43): generated cols, reals, csv, .width,
+    // REPL, -safe, .limit, .fullschema. Each expectation is pinned against a
+    // real sqlite3 used as the oracle.
+
+    @Test func dumpExcludesGeneratedColumns() async throws {
+        let script = """
+        CREATE TABLE t(a INT, b INT, c INT GENERATED ALWAYS AS (a+b) VIRTUAL, d INT GENERATED ALWAYS AS (a*b) STORED);
+        INSERT INTO t(a,b) VALUES(2,3);
+        .dump
+        """
+        let r = try await run([":memory:"], input: script)
+        #expect(r.stdout.contains("INSERT INTO t VALUES(2,3);"))
+        #expect(!r.stdout.contains("VALUES(2,3,"))   // generated values excluded
+    }
+
+    @Test func fullPrecisionRealsInRoundTripModes() async throws {
+        let q = try await run([":memory:"], input: ".mode quote\nSELECT 0.1+0.2, 3.14;\n")
+        #expect(q.stdout == "0.3000000000000000445,3.140000000000000124\n")
+        let j = try await run([":memory:"], input: ".mode json\nSELECT 0.1+0.2 AS a;\n")
+        #expect(j.stdout == "[{\"a\":0.3000000000000000445}]\n")
+    }
+
+    @Test func csvModeUsesCRLF() async throws {
+        let r = try await run([":memory:"], input: ".mode csv\n.headers on\nSELECT 1 AS a, 'x' AS b;\n")
+        #expect(r.stdout == "a,b\r\n1,x\r\n")
+    }
+
+    @Test func widthWrapsAndRightJustifies() async throws {
+        let wrap = try await run([":memory:"], input: ".mode column\n.headers off\n.width 3\nSELECT 'abcdef';\n")
+        #expect(wrap.stdout == "abc\ndef\n")
+        let rj = try await run([":memory:"], input: ".mode column\n.headers off\n.width -5\nSELECT 'ab';\n")
+        #expect(rj.stdout == "   ab\n")
+    }
+
+    @Test func showReportsWidthAndColumnModeSuffix() async throws {
+        let r = try await run([":memory:"], input: ".mode box\n.width 3 5\n.show\n")
+        #expect(r.stdout.contains("mode: box --wrap 60 --wordwrap off --noquote"))
+        #expect(r.stdout.contains("width: 3 5 "))
+        #expect(r.stdout.contains("filename: :memory:"))
+    }
+
+    @Test func interactiveBannerAndPrompts() async throws {
+        let r = try await run(["-interactive", ":memory:"], input: "SELECT 1;\n.quit\n")
+        #expect(r.stdout == Session.banner + "sqlite> 1\nsqlite> ")
+    }
+
+    @Test func interactiveContinuationPrompt() async throws {
+        let r = try await run(["-interactive", ":memory:"], input: "SELECT\n1;\n.quit\n")
+        #expect(r.stdout == Session.banner + "sqlite>    ...> 1\nsqlite> ")
+    }
+
+    @Test func interactiveErrorFormat() async throws {
+        let r = try await run(["-interactive", ":memory:"], input: "SELECT bad here;\n.quit\n")
+        #expect(r.stderr.contains("Parse error: "))
+        #expect(r.stderr.contains("^--- error here"))
+    }
+
+    @Test func safeModeBlocksFileCommandAndExits() async throws {
+        let r = try await run(["-safe", ":memory:", ".backup x.db"])
+        #expect(r.exit == 1)
+        #expect(r.stderr == "line 0: cannot run .backup in safe mode\n")
+    }
+
+    @Test func safeModeRejectsRealFileOpenButAllowsMemory() async throws {
+        let real = try await run(["-safe", ":memory:", ".open foo.db"])
+        #expect(real.exit == 1)
+        #expect(real.stderr == "line 0: cannot open disk-based database files in safe mode\n")
+        let mem = try await run(["-safe", ":memory:"], input: ".open :memory:\nSELECT 7;\n")
+        #expect(mem.exit == 0)
+        #expect(mem.stdout == "7\n")
+    }
+
+    @Test func limitListsAndSets() async throws {
+        let list = try await run([":memory:", ".limit"])
+        #expect(list.stdout.contains("              length 1000000000"))
+        #expect(list.stdout.contains("      worker_threads 0"))
+        let set = try await run([":memory:"], input: ".limit column 5\n.limit column\n")
+        #expect(set.stdout == "              column 5\n              column 5\n")
+    }
+
+    @Test func fullschemaNoStats() async throws {
+        let r = try await run([":memory:"], input: "CREATE TABLE x(a);\n.fullschema\n")
+        #expect(r.stdout == "CREATE TABLE x(a);\n/* No STAT tables available */\n")
+    }
+
+    @Test func filenameShownAsTyped() async throws {
+        let r = try await run([":memory:", ".show"])
+        #expect(r.stdout.contains("filename: :memory:"))
     }
 }
 
