@@ -400,6 +400,61 @@ import Testing
         #expect(r.stdout.contains(".tables"))   // preserved as data
         #expect(!r.stdout.contains("marker"))   // .tables never executed
     }
+
+    // MARK: dot-command coverage parity (issue #43)
+
+    @Test func databasesShowsFileAndReadWrite() async throws {
+        // sqlite3: "<name>: <"" if no file> <r/w|r/o>".
+        let r = try await run([":memory:"], input: ".databases\n")
+        #expect(r.stdout == "main: \"\" r/w\n")
+    }
+
+    @Test func schemaViewGetsColumnComment() async throws {
+        // sqlite3 appends /* view(cols) */ (with identifier quoting) to a view.
+        let r = try await run([":memory:"], input: """
+        CREATE TABLE t(a, b);
+        CREATE VIEW v AS SELECT a, b + 1 AS bb FROM t;
+        .schema v
+        """)
+        #expect(r.stdout == "CREATE VIEW v AS SELECT a, b + 1 AS bb FROM t\n/* v(a,bb) */;\n")
+    }
+
+    @Test func showListsAllTwelveSettings() async throws {
+        // sqlite3's .show: 12 labels right-justified to width 12.
+        let r = try await run([":memory:"], input: ".show\n")
+        let expected = [
+            "        echo: off",
+            "         eqp: off",
+            "     explain: auto",
+            "     headers: off",
+            "        mode: list",
+            "   nullvalue: \"\"",
+            "      output: stdout",
+            "colseparator: \"|\"",
+            "rowseparator: \"\\n\"",
+            "       stats: off",
+            "       width: ",
+            "    filename: :memory:",
+        ].joined(separator: "\n") + "\n"
+        #expect(r.stdout == expected)
+    }
+
+    @Test func schemaUnresolvableViewHasNoComment() async throws {
+        // A view that can't be prepared (missing table) prints just its stored
+        // CREATE — no bogus /* v() */ comment (matches sqlite3). [PR #48 review]
+        let r = try await run([":memory:"], input: """
+        CREATE VIEW v AS SELECT * FROM missing;
+        .schema v
+        """)
+        #expect(r.stdout == "CREATE VIEW v AS SELECT * FROM missing;\n")
+    }
+
+    @Test func showReportsModeDerivedSeparators() async throws {
+        // .mode csv changes the reported separators to , / \r\n. [PR #48 review]
+        let r = try await run([":memory:"], input: ".mode csv\n.show\n")
+        #expect(r.stdout.contains("colseparator: \",\""))
+        #expect(r.stdout.contains("rowseparator: \"\\r\\n\""))
+    }
 }
 
 #endif  // !os(Android)
