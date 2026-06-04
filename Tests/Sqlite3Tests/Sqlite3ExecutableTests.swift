@@ -350,8 +350,13 @@ import Testing
     }
 
     @Test func dumpPreservesAutoincrementSequence() async throws {
-        // sqlite3 re-emits the AUTOINCREMENT high-water mark via
-        // sqlite_sequence (no CREATE for it) so the counter survives a reload.
+        // sqlite3's .dump re-emits the AUTOINCREMENT high-water mark as a
+        // sqlite_sequence INSERT — with no CREATE (the table is implicit) and,
+        // for `.dump` specifically, no `DELETE FROM sqlite_sequence` (that is
+        // `.recover`'s behavior; cf. shell.c dump_callback). We match it
+        // byte-for-byte: sqlite3's own dump doesn't dedupe the row the table's
+        // own inserts re-create on replay, so this is parity, not a "perfect"
+        // counter reload — see PR #46 review.
         let r = try await run([":memory:"], input: """
         CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT, v);
         INSERT INTO t(v) VALUES('a'),('b'),('c');
@@ -361,6 +366,7 @@ import Testing
         #expect(r.exit == 0)
         #expect(r.stdout.contains("INSERT INTO sqlite_sequence VALUES('t',3);"))
         #expect(!r.stdout.contains("CREATE TABLE sqlite_sequence"))
+        #expect(!r.stdout.contains("DELETE FROM sqlite_sequence"))  // .dump ≠ .recover
     }
 
     @Test func dumpSingleTableOmitsSequence() async throws {
