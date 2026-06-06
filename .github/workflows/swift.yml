@@ -47,6 +47,11 @@ jobs:
         run: swift build --build-tests -v
       - name: Test (macOS)
         run: swift test -v --skip-build --no-parallel
+      - name: Test with FTS5 trait (macOS)
+        # Prove the opt-in full-text-search trait builds and works. --traits
+        # forces a rebuild of the SQLite engine with -DSQLITE_ENABLE_FTS5, so
+        # the #if FTS5 branch of fullTextSearchFTS5 exercises MATCH / bm25.
+        run: swift test -v --traits FTS5 --filter fullTextSearchFTS5
 
   build-ios:
     # Build + test on the iOS Simulator. Process-using SwiftGit
@@ -96,6 +101,10 @@ jobs:
         run: swift build --build-tests -v
       - name: Test (Linux)
         run: swift test -v --skip-build --no-parallel
+      - name: Test with FTS5 trait (Linux)
+        # Validate full-text search on Linux: --traits rebuilds the engine
+        # with -DSQLITE_ENABLE_FTS5 and runs the #if FTS5 functional proof.
+        run: swift test -v --traits FTS5 --filter fullTextSearchFTS5
 
   build-windows:
     # Full Windows build. The libgit2 fork
@@ -176,6 +185,14 @@ jobs:
           swift test -v --skip-build --no-parallel `
             -Xcc "-I$env:VCPKG_BASE\include" `
             -Xlinker "/LIBPATH:$env:VCPKG_BASE\lib"
+      - name: Test with FTS5 trait (Windows)
+        # Validate full-text search on Windows: --traits rebuilds the engine
+        # with -DSQLITE_ENABLE_FTS5 and runs the #if FTS5 functional proof.
+        shell: pwsh
+        run: |
+          swift test -v --traits FTS5 --filter fullTextSearchFTS5 `
+            -Xcc "-I$env:VCPKG_BASE\include" `
+            -Xlinker "/LIBPATH:$env:VCPKG_BASE\lib"
 
   # Android: cross-build the SDK libraries and run their test suites on an
   # x86_64 emulator, via skiptools/swift-android-action. No `container:` —
@@ -212,3 +229,11 @@ jobs:
           swift-version: "6.3.2"
           # SDK + NDK + emulator overrun the runner's ~14 GiB free space.
           free-disk-space: true
+          # Cross-build + run the SDK suite with the FTS5 trait so full-text
+          # search is validated on Android too: the engine is compiled with
+          # -DSQLITE_ENABLE_FTS5 and the #if FTS5 branch of fullTextSearchFTS5
+          # runs on the x86_64 emulator. (The other platforms keep a default,
+          # FTS-off run; the off-state contract is asserted by the #else
+          # branch there.)
+          swift-build-flags: "--traits FTS5"
+          swift-test-flags: "--traits FTS5"
