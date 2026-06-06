@@ -99,6 +99,53 @@ import Testing
     @Test func vendoredVersionIsPinned() {
         #expect(SQLiteDatabase.libVersion == "3.50.4")
     }
+
+    // FTS5 full-text search, gated by the package's `FTS5` trait (off by
+    // default). The test pins the on/off contract in both directions: with
+    // the trait, the engine advertises ENABLE_FTS5 and MATCH works; without
+    // it, the module is absent and `USING fts5(...)` fails. SwiftPM defines
+    // the `FTS5` compilation condition for this target exactly when the trait
+    // is enabled, so run the positive path with `swift test --traits FTS5`.
+    @Test func fullTextSearchFTS5() throws {
+        let db = try SQLiteDatabase.inMemory()
+        let options = try db.evaluate("PRAGMA compile_options;")[0].rows.map { $0[0] }
+        #if FTS5
+        // Trait enabled: the flag is baked into the engine.
+        #expect(options.contains(.text("ENABLE_FTS5")))
+
+        try db.evaluate("""
+            CREATE VIRTUAL TABLE docs USING fts5(title, body);
+            INSERT INTO docs(title, body) VALUES
+              ('SQLite FTS', 'Full text search. Full ranking. Full speed.'),
+              ('Swift Pkgs', 'SwiftPM traits toggle compile-time features.'),
+              ('Gardening',  'Tomatoes need full sun and regular watering.');
+            """)
+
+        // Single-term MATCH hits only the row containing the term.
+        let hit = try db.evaluate("SELECT title FROM docs WHERE docs MATCH 'search';")
+        #expect(hit[0].rows == [[.text("SQLite FTS")]])
+
+        // Column filter: `body:compile` only matches within the body column.
+        let col = try db.evaluate("SELECT title FROM docs WHERE docs MATCH 'body:compile';")
+        #expect(col[0].rows == [[.text("Swift Pkgs")]])
+
+        // Boolean AND requires both terms in the same row.
+        let both = try db.evaluate("SELECT title FROM docs WHERE docs MATCH 'full AND text';")
+        #expect(both[0].rows == [[.text("SQLite FTS")]])
+
+        // bm25 ranking: more occurrences of the term rank higher. "full"
+        // appears 3× in the SQLite row, 1× in the Gardening row, so ORDER BY
+        // rank returns SQLite first.
+        let ranked = try db.evaluate("SELECT title FROM docs WHERE docs MATCH 'full' ORDER BY rank;")
+        #expect(ranked[0].rows.map { $0[0] } == [.text("SQLite FTS"), .text("Gardening")])
+        #else
+        // Trait disabled (the default build): the module must not be present.
+        #expect(!options.contains(.text("ENABLE_FTS5")))
+        #expect(throws: SQLiteError.self) {
+            try db.evaluate("CREATE VIRTUAL TABLE docs USING fts5(x);")
+        }
+        #endif
+    }
 }
 
 @Suite struct ResultFormatterTests {

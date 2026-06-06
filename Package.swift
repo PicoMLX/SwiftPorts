@@ -234,6 +234,18 @@ let package = Package(
         .library(name: "FdCommand", targets: ["FdCommand"]),
         .executable(name: "fd", targets: ["fd"]),
     ]),
+    // Package traits — opt-in, build-time toggles forwarded to dependencies.
+    // FTS5 is OFF by default (it is not listed in any `.default(enabledTraits:)`),
+    // because it grows the engine binary and most embedders don't need it.
+    // The flag compiles into the shared SQLite C target, so a trait — not a
+    // separate product — is the only way to make it a consumer choice.
+    //   • depending on this package:  .package(url: …, traits: ["FTS5"])
+    //   • building this package direct: swift build --traits FTS5
+    // See `fullTextSearchFTS5` in SQLiteKitTests for the on/off contract.
+    traits: [
+        .trait(name: "FTS5",
+               description: "Compile SQLite with FTS5 full-text search."),
+    ],
     dependencies: [
         // Apple / swiftlang
         .package(url: "https://github.com/apple/swift-argument-parser",
@@ -303,9 +315,13 @@ let package = Package(
         // way as the libgit2 fork above (depend on the package, don't host
         // the 8.9 MB blob in this repo). Backs the SQLiteKit umbrella.
         // Pinned exact so the engine version is identical on every
-        // platform (issue #43).
+        // platform (issue #43). Our own `FTS5` trait forwards to CSQLite's
+        // `FTS5` trait, which compiles the amalgamation with
+        // `-DSQLITE_ENABLE_FTS5`. Off unless the consumer opts in (see the
+        // `traits:` block above).
         .package(url: "https://github.com/stephencelis/CSQLite",
-                 exact: "3.50.4"),
+                 exact: "3.50.4",
+                 traits: [.trait(name: "FTS5", condition: .when(traits: ["FTS5"]))]),
     ],
     targets: androidFiltered(targets: [
         // MARK: ForgeKit (host-agnostic plumbing)
