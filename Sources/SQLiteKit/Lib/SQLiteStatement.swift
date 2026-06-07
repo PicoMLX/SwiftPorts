@@ -85,6 +85,26 @@ public final class SQLiteStatement {
         try bind(value, at: index)
     }
 
+    /// Binds a *complete* set of named parameters at once, clearing any prior
+    /// bindings first. Mirrors the strictness of the positional ``bind(_:)``:
+    /// throws a `.prepare`-phase error when the dictionary's size doesn't match
+    /// the statement's parameter count — i.e. some slot would be left unbound
+    /// and silently treated as NULL — or when a key names no parameter.
+    public func bind(_ parameters: [String: SQLiteValue]) throws {
+        guard let handle else { return }
+        let expected = Int(sqlite3_bind_parameter_count(handle))
+        guard parameters.count == expected else {
+            throw SQLiteError(
+                code: SQLITE_ERROR,
+                message: "statement has \(expected) parameter(s) but \(parameters.count) named value(s) were bound",
+                phase: .prepare)
+        }
+        sqlite3_clear_bindings(handle)
+        for (name, value) in parameters {
+            try bind(name, value)
+        }
+    }
+
     /// Steps the statement once. Returns the next ``SQLiteRow`` while rows
     /// remain, or `nil` at `SQLITE_DONE` (including immediately, for a
     /// statement that produces no rows).

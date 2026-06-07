@@ -136,13 +136,13 @@ public final class SQLiteDatabase {
 
     /// Named-parameter (`:name` / `@name` / `$name`) variant of the bound
     /// ``evaluate(_:_:)``. Keys are the parameter names *including* their
-    /// leading sigil; an unknown name throws a `.prepare`-phase error.
+    /// leading sigil. Like the positional path, this is strict: an unknown
+    /// name, or a dictionary that doesn't cover every parameter, throws a
+    /// `.prepare`-phase error rather than leaving a slot silently NULL.
     @discardableResult
     public func evaluate(_ sql: String, _ parameters: [String: SQLiteValue]) throws -> [ResultSet] {
         let statement = try SQLiteStatement(self, sql)
-        for (name, value) in parameters {
-            try statement.bind(name, value)
-        }
+        try statement.bind(parameters)
         return try statement.collectResultSet()
     }
 
@@ -400,10 +400,19 @@ public final class SQLiteDatabase {
             var tail: UnsafePointer<CChar>?
             let r = sqlite3_prepare_v2(handle, start, -1, &stmt, &tail)
             if r == SQLITE_OK, let tail {
-                // Anything beyond whitespace / a bare terminator in the tail is
-                // a second statement the bound API can't address.
-                tailRemains = String(cString: tail)
-                    .trimmingCharacters(in: SQLiteDatabase.statementTailTrim).isEmpty == false
+                // Decide whether the tail holds a *real* second statement by
+                // asking the engine, rather than scanning text — preparing a
+                // whitespace- or comment-only remainder yields SQLITE_OK with a
+                // nil statement, so `SELECT 1; -- note` is accepted, while a
+                // genuine (or malformed) trailing statement is rejected.
+                var tailStmt: OpaquePointer?
+                let tr = sqlite3_prepare_v2(handle, tail, -1, &tailStmt, nil)
+                if tailStmt != nil {
+                    tailRemains = true
+                    sqlite3_finalize(tailStmt)
+                } else if tr != SQLITE_OK {
+                    tailRemains = true
+                }
             }
             return r
         }
@@ -420,14 +429,6 @@ public final class SQLiteDatabase {
         }
         return stmt
     }
-
-    /// Whitespace plus the statement terminator — what counts as an "empty"
-    /// tail after the first prepared statement.
-    private static let statementTailTrim: CharacterSet = {
-        var set = CharacterSet.whitespacesAndNewlines
-        set.insert(";")
-        return set
-    }()
 
     /// Prepares each statement in `sql` in turn and hands it to `body`,
     /// finalizing afterwards. `body` is responsible for stepping it.

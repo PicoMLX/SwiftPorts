@@ -219,6 +219,18 @@ import Testing
         }
     }
 
+    @Test func incompleteNamedDictionaryThrows() throws {
+        // The named path is as strict as the positional one: a dictionary that
+        // doesn't cover every parameter throws rather than leaving :b NULL.
+        let db = try SQLiteDatabase.inMemory()
+        #expect(throws: SQLiteError.self) {
+            try db.evaluate("SELECT :a + :b;", [":a": .integer(1)])
+        }
+        // A reused name still counts as one parameter, so a single key suffices.
+        let row = try db.evaluate("SELECT :a, :a + 1;", [":a": .integer(7)])[0].rows[0]
+        #expect(row == [.integer(7), .integer(8)])
+    }
+
     @Test func parameterCountMismatchThrowsBeforeStepping() throws {
         let db = try SQLiteDatabase.inMemory()
         let stmt = try SQLiteStatement(db, "SELECT ?, ?;")
@@ -232,9 +244,12 @@ import Testing
 
     @Test func boundPathRejectsMultipleStatements() throws {
         let db = try SQLiteDatabase.inMemory()
-        // Trailing whitespace / a bare terminator is fine…
+        // Trailing whitespace / a bare terminator / a comment is fine…
         #expect(throws: Never.self) {
             try SQLiteStatement(db, "SELECT 1;  ")
+        }
+        #expect(throws: Never.self) {
+            try SQLiteStatement(db, "SELECT 1; -- trailing note")
         }
         // …but a real second statement can't be bound unambiguously.
         #expect(throws: SQLiteError.self) {
