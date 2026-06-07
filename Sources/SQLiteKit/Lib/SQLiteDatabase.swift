@@ -118,6 +118,45 @@ public final class SQLiteDatabase {
         return sets
     }
 
+    /// Runs a *single* SQL statement with positional `?`-parameters bound
+    /// out-of-band — no escaping, no literal interpolation. Parameters are
+    /// supplied 0-based in the array and map to SQLite's 1-based `?N` slots
+    /// in order. Returns the statement's ``ResultSet`` if it produced columns
+    /// (SELECT / PRAGMA / RETURNING …), or an empty array otherwise.
+    ///
+    /// Unlike ``evaluate(_:)``, the bound path accepts exactly one statement:
+    /// binding can't disambiguate which `?` belongs to which statement, so a
+    /// trailing second statement throws a `.prepare`-phase ``SQLiteError``.
+    @discardableResult
+    public func evaluate(_ sql: String, _ parameters: [SQLiteValue]) throws -> [ResultSet] {
+        let statement = try SQLiteStatement(self, sql)
+        try statement.bind(parameters)
+        return try statement.collectResultSet()
+    }
+
+    /// Named-parameter (`:name` / `@name` / `$name`) variant of the bound
+    /// ``evaluate(_:_:)``. Keys are the parameter names *including* their
+    /// leading sigil. Like the positional path, this is strict: an unknown
+    /// name, or a dictionary that doesn't cover every parameter, throws a
+    /// `.prepare`-phase error rather than leaving a slot silently NULL.
+    @discardableResult
+    public func evaluate(_ sql: String, _ parameters: [String: SQLiteValue]) throws -> [ResultSet] {
+        let statement = try SQLiteStatement(self, sql)
+        try statement.bind(parameters)
+        return try statement.collectResultSet()
+    }
+
+    /// Streaming, bound variant of ``execute(_:row:)`` — runs one statement
+    /// with positional `?`-parameters and invokes `row` for each result row.
+    public func execute(_ sql: String, _ parameters: [SQLiteValue],
+                        row: ((SQLiteRow) throws -> Void)? = nil) throws {
+        let statement = try SQLiteStatement(self, sql)
+        try statement.bind(parameters)
+        while let produced = try statement.step() {
+            try row?(produced)
+        }
+    }
+
     /// Streaming variant: runs every statement, invoking `row` for each
     /// result row as it is produced.
     public func execute(_ sql: String, row: ((SQLiteRow) throws -> Void)? = nil) throws {
@@ -341,11 +380,54 @@ public final class SQLiteDatabase {
 
     // MARK: Internals
 
-    private func lastError(phase: SQLiteError.Phase) -> SQLiteError {
+    func lastError(phase: SQLiteError.Phase) -> SQLiteError {
         SQLiteError(code: sqlite3_errcode(handle),
                     message: String(cString: sqlite3_errmsg(handle)),
                     offset: sqlite3_error_offset(handle),
                     phase: phase)
+    }
+
+    /// Prepares exactly one statement from `sql`, returning its handle (the
+    /// caller owns it and must `sqlite3_finalize` it). Throws a
+    /// `.prepare`-phase ``SQLiteError`` when the SQL is blank / comment-only
+    /// (no statement to bind) or when a second statement follows the first —
+    /// the bound APIs are single-statement only. Shared by ``SQLiteStatement``
+    /// and the bound `evaluate` / `execute` overloads.
+    func prepareSingleStatement(_ sql: String) throws -> OpaquePointer {
+        var stmt: OpaquePointer?
+        var tailRemains = false
+        let rc = sql.withCString { start -> Int32 in
+            var tail: UnsafePointer<CChar>?
+            let r = sqlite3_prepare_v2(handle, start, -1, &stmt, &tail)
+            if r == SQLITE_OK, let tail {
+                // Decide whether the tail holds a *real* second statement by
+                // asking the engine, rather than scanning text — preparing a
+                // whitespace- or comment-only remainder yields SQLITE_OK with a
+                // nil statement, so `SELECT 1; -- note` is accepted, while a
+                // genuine (or malformed) trailing statement is rejected.
+                var tailStmt: OpaquePointer?
+                let tr = sqlite3_prepare_v2(handle, tail, -1, &tailStmt, nil)
+                if tailStmt != nil {
+                    tailRemains = true
+                    sqlite3_finalize(tailStmt)
+                } else if tr != SQLITE_OK {
+                    tailRemains = true
+                }
+            }
+            return r
+        }
+        guard rc == SQLITE_OK else { throw lastError(phase: .prepare) }
+        guard let stmt else {
+            throw SQLiteError(code: SQLITE_ERROR,
+                              message: "no SQL statement to prepare", phase: .prepare)
+        }
+        guard !tailRemains else {
+            sqlite3_finalize(stmt)
+            throw SQLiteError(code: SQLITE_ERROR,
+                              message: "bound statement must contain a single SQL statement",
+                              phase: .prepare)
+        }
+        return stmt
     }
 
     /// Prepares each statement in `sql` in turn and hands it to `body`,
@@ -372,13 +454,13 @@ public final class SQLiteDatabase {
         }
     }
 
-    private static func columnNames(_ stmt: OpaquePointer) -> [String] {
+    static func columnNames(_ stmt: OpaquePointer) -> [String] {
         let count = Int(sqlite3_column_count(stmt))
         guard count > 0 else { return [] }
         return (0..<count).map { String(cString: sqlite3_column_name(stmt, Int32($0))) }
     }
 
-    private static func rowValues(_ stmt: OpaquePointer, count: Int) -> [SQLiteValue] {
+    static func rowValues(_ stmt: OpaquePointer, count: Int) -> [SQLiteValue] {
         (0..<count).map { columnValue(stmt, Int32($0)) }
     }
 
