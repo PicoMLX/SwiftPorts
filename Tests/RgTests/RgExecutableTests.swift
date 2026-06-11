@@ -9,16 +9,23 @@ import Testing
 
     /// Run the executable inside a fresh `Shell` bound to a temp
     /// working directory. Captures stdout/stderr.
+    ///
+    /// Binding a fresh `Shell` puts every run on the *embedded*
+    /// routing path, so the no-path stdin-vs-cwd decision is
+    /// deterministic: it reads the bound `InputSource` (canonical
+    /// `.empty` when no `stdin:` input is given), never the harness
+    /// process's fd 0. `stdinIsReadable` pins the explicit override.
     private func run(_ argv: [String],
                      in tree: [String: String] = [:],
-                     stdin input: String = "")
+                     stdin input: String = "",
+                     stdinIsReadable: Bool? = nil)
     async throws -> (stdout: String, stderr: String, exit: Int32, root: URL) {
         let root = try makeTree(tree)
         let env = Environment(
             variables: ProcessInfo.processInfo.environment,
             workingDirectory: root.path)
-        var shell = Shell(environment: env)
-        shell.stdin = .string(input)
+        let shell = Shell(environment: env)
+        shell.stdin = input.isEmpty ? .empty : .string(input)
         let stdoutSink = OutputSink()
         let stderrSink = OutputSink()
         shell.stdout = stdoutSink
@@ -28,7 +35,8 @@ import Testing
                 argv: argv,
                 stdin: shell.stdin,
                 stdout: stdoutSink,
-                stderr: stderrSink)
+                stderr: stderrSink,
+                stdinIsReadable: stdinIsReadable)
         }
         stdoutSink.finish()
         stderrSink.finish()
@@ -194,10 +202,87 @@ import Testing
     }
 
     @Test func stdinSearch() async throws {
-        let r = try await run(["beta"], stdin: "alpha\nbeta\ngamma\n")
+        let r = try await run(["beta"], stdin: "alpha\nbeta\ngamma\n",
+                              stdinIsReadable: true)
         defer { try? FileManager.default.removeItem(at: r.root) }
         #expect(r.exit == 0)
         #expect(r.stdout.contains("beta"))
+    }
+
+    // MARK: - No-path default (issue #65)
+
+    /// `rg PATTERN` with no path must walk the cwd whenever stdin
+    /// isn't readable input (a terminal, `/dev/null`, a closed fd —
+    /// pinned here via the explicit override). Regression: the
+    /// routing gated on `!isStdinTTY`, so any non-TTY-but-empty
+    /// stdin shape made the no-path invocation read stdin and
+    /// report no matches.
+    @Test func noPathWalksCwdWhenStdinNotReadable() async throws {
+        let r = try await run(["-l", "hello"], in: [
+            "inner.txt":    "hello\n",
+            "sub/deep.txt": "hello\n",
+        ], stdinIsReadable: false)
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("inner.txt"))
+        #expect(r.stdout.contains("sub/deep.txt"))
+        // Real rg prints the cwd walk bare — no "./" prefix.
+        #expect(!r.stdout.contains("./inner.txt"))
+    }
+
+    /// Embedded routing with no override: a bound (non-canonical)
+    /// stdin is read — the host process's fd 0 has no say. This is
+    /// the in-process entry point's contract: an embedder that
+    /// attaches real input gets it consumed, whatever fd 0 looks
+    /// like (review feedback on PR #71).
+    @Test func noPathEmbeddedReadsBoundStdin() async throws {
+        let r = try await run(["hello"], in: [
+            "inner.txt": "hello from file\n",
+        ], stdin: "hello from pipe\n")
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("hello from pipe"))
+        #expect(!r.stdout.contains("hello from file"))
+    }
+
+    /// Embedded routing with no override and nothing attached — the
+    /// shell bound the canonical `.empty` (what SwiftBash binds when
+    /// no pipe or redirect feeds the command): walk the cwd.
+    @Test func noPathEmbeddedNothingAttachedWalksCwd() async throws {
+        let r = try await run(["-l", "hello"], in: [
+            "inner.txt": "hello\n",
+        ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("inner.txt"))
+    }
+
+    /// The flip side: readable stdin (a pipe) wins over the cwd walk
+    /// for a no-path invocation, and the cwd files stay untouched.
+    @Test func noPathPrefersReadableStdinOverCwd() async throws {
+        let r = try await run(["hello"], in: [
+            "inner.txt": "hello from file\n",
+        ], stdin: "hello from pipe\n", stdinIsReadable: true)
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("hello from pipe"))
+        #expect(!r.stdout.contains("hello from file"))
+    }
+
+    /// `rg --files` with no path lists the cwd bare (no "./" prefix),
+    /// matching real rg.
+    @Test func filesModeNoPathListsCwd() async throws {
+        let r = try await run(["--files"], in: [
+            "a.txt":     "x",
+            "sub/b.txt": "y",
+        ])
+        defer { try? FileManager.default.removeItem(at: r.root) }
+        #expect(r.exit == 0)
+        let lines = r.stdout
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+            .sorted()
+        #expect(lines == ["a.txt", "sub/b.txt"])
     }
 
     @Test func filesMode() async throws {
