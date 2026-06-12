@@ -64,7 +64,7 @@ struct ApiCommand: AsyncParsableCommand {
     var hostname: String?
 
     @Flag(name: [.customShort("i"), .customLong("include")],
-          help: "Include HTTP response status line and headers.")
+          help: "Include HTTP response status line and headers in the output.")
     var includeHeaders: Bool = false
 
     @Option(name: [.customShort("q"), .customLong("jq")],
@@ -101,9 +101,18 @@ struct ApiCommand: AsyncParsableCommand {
         )
 
         if includeHeaders {
-            Shell.print("HTTP \(response.status)")
-            if let ct = response.contentType { Shell.print("Content-Type: \(ct)") }
-            Shell.print("")
+            // The preamble carries its own upstream-exact line
+            // endings (`\n` status line, `\r\n` header lines). When
+            // the transport doesn't report the negotiated protocol
+            // (corelibs never fires URLSessionTaskMetrics), assume
+            // HTTP/2 — what GitHub negotiates with both upstream gh
+            // and URLSession.
+            Shell.print(
+                Self.formatIncludeHeaders(
+                    proto: response.httpVersion ?? "HTTP/2.0",
+                    status: response.status,
+                    headerFields: response.headerFields),
+                terminator: "")
         }
 
         let isJSON = response.contentType?.contains("json") ?? false
@@ -118,11 +127,13 @@ struct ApiCommand: AsyncParsableCommand {
             return
         }
 
-        if isJSON {
-            Shell.print(JSONPretty.string(from: response.body))
-        } else {
-            Shell.print(String(data: response.body, encoding: .utf8) ?? "")
-        }
+        // Body bytes go out exactly as received — upstream pipes the
+        // response through io.Copy when stdout is not a TTY: no
+        // re-formatting, no key re-ordering, no added newline (and a
+        // 204's empty body prints nothing). Upstream's only other
+        // mode is TTY colorized pretty-printing, which the port
+        // (colorless throughout) doesn't enter.
+        Shell.current.stdout.write(response.body)
     }
 
     private func buildBody() async throws -> Data? {
