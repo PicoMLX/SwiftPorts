@@ -133,14 +133,14 @@ import Testing
         #expect(!r.stdout.contains(long))
     }
 
-    /// Hardened mode re-pins `temp_store=MEMORY` before each statement, so an
-    /// untrusted `PRAGMA temp_store=FILE;` can't make later temp spill to disk.
-    @Test func hardenedRepinsTempStore() async throws {
+    /// Hardened mode refuses an in-band `PRAGMA temp_store=FILE;` (so later
+    /// sorts/temp tables can't spill to disk) while still allowing a read. The
+    /// startup `temp_store=MEMORY` (2) therefore holds.
+    @Test func hardenedBlocksTempStoreChange() async throws {
         let r = try await run([":memory:"], policy: .hardened(),
                               input: "PRAGMA temp_store=FILE;\nPRAGMA temp_store;\n")
-        // 2 == MEMORY; the FILE (1) override was undone before the read.
-        #expect(r.stdout.contains("2"))
-        #expect(!r.stdout.contains("1"))
+        #expect(r.stderr.contains("temp_store"))   // the set was refused
+        #expect(r.stdout.contains("2"))            // still MEMORY when read back
     }
 
     /// Audit is a trusted control recorded before execution: if its

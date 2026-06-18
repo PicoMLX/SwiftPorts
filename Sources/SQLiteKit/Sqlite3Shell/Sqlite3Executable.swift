@@ -288,6 +288,14 @@ final class Session {
         return String(s[...lastNewline])
     }
 
+    /// True if `sql` *sets* `temp_store` (`PRAGMA temp_store = …` or
+    /// `temp_store(…)`), as opposed to a bare read. Best-effort lexical match
+    /// used to refuse temp-store changes under a hardened policy; the
+    /// evasion-proof fix is the SDK compile flag SQLITE_TEMP_STORE=3.
+    private static func setsTempStore(_ sql: String) -> Bool {
+        sql.range(of: #"(?i)pragma\s+temp_store\s*[=(]"#, options: .regularExpression) != nil
+    }
+
     /// The central stdout path. In hardened mode it enforces the output-byte
     /// cap across ALL data written here — SQL result sets and data-bearing
     /// dot-commands (`.dump` / `.schema` / `.print` / …) alike — so an untrusted
@@ -367,10 +375,11 @@ final class Session {
                 }
             }
         }
-        // SQLite runs a final statement even without a trailing semicolon.
+        // SQLite runs a final statement even without a trailing semicolon —
+        // but not once we've quit or the hardened time budget is spent.
         let leftover = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         buffer = ""
-        if !leftover.isEmpty {
+        if !leftover.isEmpty, !shouldQuit, !budgetExceeded() {
             if !(await runStatement(leftover, startLine: statementStart, context: context)) && stopsOnError() {
                 return false
             }
@@ -419,10 +428,11 @@ final class Session {
                 _ = await runStatement(sql, startLine: statementStart, context: .interactive)
             }
         }
-        // Run a trailing statement left unterminated at EOF, like sqlite3.
+        // Run a trailing statement left unterminated at EOF, like sqlite3 —
+        // unless we've quit or the hardened time budget is already spent.
         let leftover = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         buffer = ""
-        if !leftover.isEmpty {
+        if !leftover.isEmpty, !shouldQuit, !budgetExceeded() {
             _ = await runStatement(leftover, startLine: statementStart, context: .interactive)
         }
     }
@@ -431,12 +441,11 @@ final class Session {
     /// on error (after reporting it).
     @discardableResult
     private func runStatement(_ sql: String, startLine: Int, context: SourceContext) async -> Bool {
-        if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
-        if eqp { renderQueryPlan(sql) }
-        // Attempted-audit (intent, recorded BEFORE execution). Fail closed: if
-        // the trail can't be written, refuse to run the statement — an audited
-        // boundary must not let unaudited actions through. No-op (always true)
-        // unless an audit destination was configured by the embedder.
+        // Attempted-audit (intent) FIRST — before echo / EXPLAIN QUERY PLAN /
+        // any DB work — so a fail-closed audit blocks *all* effects of the
+        // statement, not just the main evaluate. Fail closed: if the trail
+        // can't be written, refuse the statement. No-op (always true) unless an
+        // audit destination was configured by the embedder.
         if await audit.record(.attempted(
             kind: "sql", text: sql.trimmingCharacters(in: .whitespacesAndNewlines))) == false {
             err("Error: audit write failed; refusing to run unaudited statement\n")
@@ -444,11 +453,21 @@ final class Session {
             shouldQuit = true
             return false
         }
-        // Re-pin temp storage before each statement under a hardened policy:
-        // PRAGMA is still allowed, so an untrusted `PRAGMA temp_store=FILE;`
-        // would otherwise undo the startup setting and let later sorts spill to
-        // disk. (The definitive fix is the SDK compile flag SQLITE_TEMP_STORE=3
-        // — see Docs/PORTING-FROM-SWIFTSQLITE.md.)
+        // Under a hardened policy, refuse a statement that *sets* temp_store:
+        // PRAGMA is otherwise allowed, and a `PRAGMA temp_store=FILE;` (even in
+        // the same multi-statement chunk handed to `evaluate`) would let later
+        // sorts/temp tables spill to disk. Reading it is still fine. (The
+        // definitive, evasion-proof fix is the SDK compile flag
+        // SQLITE_TEMP_STORE=3 — see Docs/PORTING-FROM-SWIFTSQLITE.md.)
+        if policy.hardened, Self.setsTempStore(sql) {
+            err("Error: PRAGMA temp_store may not be changed under the hardened policy\n")
+            exitCode = 1
+            return false
+        }
+        if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
+        if eqp { renderQueryPlan(sql) }
+        // Belt-and-suspenders: re-pin temp_store=MEMORY before each statement in
+        // case the guard above was evaded (e.g. an interleaved comment).
         if policy.hardened { _ = try? database.evaluate("PRAGMA temp_store=MEMORY;") }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
@@ -658,15 +677,21 @@ final class Session {
                     WHERE type != 'meta' AND sql NOT NULL AND name NOT LIKE 'sqlite_%'
                     ORDER BY x;
                     """).first?.rows.compactMap { $0.first?.cliText } ?? []
-                for sql in schema { out(sql + ";\n") }
+                for sql in schema {
+                    if outputCapped { break }
+                    out(sql + ";\n")
+                }
+                if outputCapped { return }
                 let hasStats = try !(database.evaluate(
                     "SELECT 1 FROM sqlite_schema WHERE name GLOB 'sqlite_stat[134]' LIMIT 1;")
                     .first?.rows.isEmpty ?? true)
                 guard hasStats else { out("/* No STAT tables available */\n"); return }
                 out("ANALYZE sqlite_schema;\n")
                 for statTable in ["sqlite_stat1", "sqlite_stat4"] where try tableExists(statTable) {
+                    if outputCapped { break }
                     let rows = try database.evaluate("SELECT * FROM \(statTable);").first?.rows ?? []
                     for row in rows {
+                        if outputCapped { break }
                         out("INSERT INTO \(statTable) VALUES(\(row.map(\.sqlLiteral).joined(separator: ",")));\n")
                     }
                 }
@@ -703,6 +728,7 @@ final class Session {
                     ORDER BY rowid;
                     """).first?.rows ?? []
                 for t in tables {
+                    if outputCapped { break }   // stop querying once the cap is hit
                     guard case .text(let name) = t[0], case .text(let createSQL) = t[1] else { continue }
                     out(createSQL + ";\n")
                     // Quote the table name the way sqlite3 does — bare for a
@@ -719,6 +745,7 @@ final class Session {
                         : cols.map { SQLiteDatabase.quoteIdentifier($0) }.joined(separator: ",")
                     let rows = try database.evaluate("SELECT \(selectList) FROM \(ident);").first?.rows ?? []
                     for row in rows {
+                        if outputCapped { break }
                         out("INSERT INTO \(ident) VALUES(\(row.map(\.sqlLiteral).joined(separator: ",")));\n")
                     }
                 }
@@ -731,17 +758,22 @@ final class Session {
                     let seq = try database.evaluate(
                         "SELECT name, seq FROM sqlite_sequence ORDER BY rowid;").first?.rows ?? []
                     for row in seq {
+                        if outputCapped { break }
                         out("INSERT INTO sqlite_sequence VALUES(\(row.map(\.sqlLiteral).joined(separator: ",")));\n")
                     }
                 }
                 // Then views + triggers, then indexes last (sqlite3's order).
                 let objFilter = only.map { " AND tbl_name = '\(SQLiteDatabase.quote($0))'" } ?? ""
                 for types in ["'view','trigger'", "'index'"] {
+                    if outputCapped { break }
                     let sqls = try database.evaluate("""
                         SELECT sql FROM sqlite_schema
                         WHERE type IN (\(types)) AND sql NOT NULL\(objFilter) ORDER BY rowid;
                         """).first?.rows.compactMap { $0.first?.cliText } ?? []
-                    for sql in sqls { out(sql + ";\n") }
+                    for sql in sqls {
+                        if outputCapped { break }
+                        out(sql + ";\n")
+                    }
                 }
                 out("COMMIT;\n")
             }
