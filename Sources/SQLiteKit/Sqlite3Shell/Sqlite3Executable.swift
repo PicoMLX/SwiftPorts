@@ -1,6 +1,11 @@
 import Foundation
 import ShellKit
 import SQLiteKit
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Argv-level entry point for the `sqlite3` CLI. Returns the process exit
 /// code. Kept in its own enum — mirroring the other ports — so embedders
@@ -9,6 +14,7 @@ public enum Sqlite3Executable {
 
     @discardableResult
     public static func run(argv: [String],
+                           policy: SQLitePolicy = .permissive,
                            stdin: InputSource,
                            stdout: OutputSink,
                            stderr: OutputSink) async throws -> Int32 {
@@ -19,6 +25,12 @@ public enum Sqlite3Executable {
             stderr.write("sqlite3: Error: \(error.message)\n")
             return 1
         }
+
+        // The effective policy is the embedder's, optionally *tightened* by an
+        // argv `-hardened` request. argv can only turn hardening on, never off
+        // — there is no path for the (untrusted) command line to relax a policy
+        // the trusted host bound.
+        let policy = options.hardened ? policy.tightenedToHardened() : policy
 
         switch options.special {
         case .help:
@@ -36,7 +48,11 @@ public enum Sqlite3Executable {
         // ":memory:" means a transient in-memory database.
         let location: SQLiteDatabase.Location
         if let path = options.databasePath, path != ":memory:", !path.isEmpty {
-            let url = Shell.resolve(path)
+            // Canonicalize (resolve symlinks) BEFORE authorizing, so the path we
+            // authorize is byte-identical to the one SQLite opens. This reduces
+            // — but does not eliminate — the symlink-swap window: fully closing
+            // it needs SQLITE_OPEN_NOFOLLOW, which lives in the SDK open.
+            let url = canonicalize(Shell.resolve(path))
             do {
                 try await Shell.authorize(url)
             } catch {
@@ -48,9 +64,26 @@ public enum Sqlite3Executable {
             location = .memory
         }
 
+        // Build the (embedder-controlled) audit destination up front so an
+        // explicit request fails closed before any SQL runs.
+        let audit: any AuditSink
+        if let auditURL = policy.auditURL {
+            let sink = FileAuditSink(url: auditURL)
+            do {
+                try await sink.preflight()
+            } catch {
+                stderr.write("sqlite3: Error: cannot open audit log \"\(auditURL.path)\": \(error)\n")
+                return 1
+            }
+            audit = sink
+        } else {
+            audit = NoOpAuditSink()
+        }
+
         let database: SQLiteDatabase
         do {
-            database = try SQLiteDatabase(location, readonly: options.readonly)
+            database = try SQLiteDatabase(location,
+                                          readonly: options.readonly || policy.forceReadOnly)
         } catch let error as SQLiteError {
             stderr.write("sqlite3: Error: \(error.message)\n")
             return 1
@@ -85,6 +118,8 @@ public enum Sqlite3Executable {
             echo: options.echo,
             bail: options.bail,
             safeMode: options.safe,
+            policy: policy,
+            audit: audit,
             filename: filename)
 
         // -init FILE, then any -cmd commands, before the main input.
@@ -112,6 +147,31 @@ public enum Sqlite3Executable {
         session.finishOutput()
         return session.exitCode
     }
+
+    /// Fully symlink-resolve a sandbox URL so it can be authorized and opened
+    /// as one identical string. An existing file resolves whole; for a path
+    /// that doesn't exist yet (a new DB, a `.backup` target) the leaf has
+    /// nothing to resolve, so resolve the parent and re-attach the leaf. Falls
+    /// back to the input if neither resolves (the open / authorize then fails
+    /// closed). Used before every authorize so the authorized path matches the
+    /// opened one.
+    static func canonicalize(_ url: URL) -> URL {
+        if let resolved = realpathOrNil(url.path) {
+            return URL(fileURLWithPath: resolved)
+        }
+        let parent = url.deletingLastPathComponent().path
+        if let resolvedParent = realpathOrNil(parent) {
+            return URL(fileURLWithPath: resolvedParent)
+                .appendingPathComponent(url.lastPathComponent)
+        }
+        return url
+    }
+
+    private static func realpathOrNil(_ path: String) -> String? {
+        guard let c = realpath(path, nil) else { return nil }
+        defer { free(c) }
+        return String(cString: c)
+    }
 }
 
 /// Holds the mutable shell state (current database, output formatter) and
@@ -136,6 +196,16 @@ final class Session {
     private var bail: Bool
     /// `-safe` mode: refuse dot-commands that touch the filesystem or shell.
     private let safeMode: Bool
+    /// The trusted, embedder-bound security policy (see `SQLitePolicy`).
+    private let policy: SQLitePolicy
+    /// Attempted-audit sink (no-op unless an audit destination was configured).
+    private let audit: any AuditSink
+    /// Hardened-mode wall-clock script budget; `nil` when no timeout is set.
+    private let deadline: Date?
+    /// Rendered result bytes emitted so far, for the hardened output cap.
+    private var resultBytesEmitted = 0
+    /// Set once the output cap has been hit, to suppress further result output.
+    private var resultCapped = false
     /// Input line number of the dot-command currently dispatching, for the
     /// `-safe` refusal message (0 for a command-line argument).
     private var safeLine = 0
@@ -161,6 +231,8 @@ final class Session {
          echo: Bool,
          bail: Bool,
          safeMode: Bool = false,
+         policy: SQLitePolicy = .permissive,
+         audit: any AuditSink = NoOpAuditSink(),
          filename: String) {
         self.database = database
         self.formatter = formatter
@@ -172,6 +244,73 @@ final class Session {
         self.echo = echo
         self.bail = bail
         self.safeMode = safeMode
+        self.policy = policy
+        self.audit = audit
+        self.deadline = policy.statementTimeout.map { Date().addingTimeInterval($0) }
+        applyHardening(to: database)
+    }
+
+    /// Apply the hardened-mode runtime controls to a freshly-opened handle:
+    /// disable ATTACH, clamp the length / SQL-length limits, and pin temp
+    /// storage in memory. Called on startup **and** after `.open`, so the
+    /// confinement can't be shed by reconnecting to a new database. It does
+    /// not touch the authorizer / PRAGMA / vtables, so vec0 + FTS5 keep working.
+    private func applyHardening(to db: SQLiteDatabase) {
+        guard policy.hardened else { return }
+        db.limit(SQLitePolicy.limitAttached, newValue: 0)
+        db.limit(SQLitePolicy.limitLength, newValue: SQLitePolicy.lengthCeiling)
+        db.limit(SQLitePolicy.limitSQLLength, newValue: SQLitePolicy.sqlLengthCeiling)
+        _ = try? db.evaluate("PRAGMA temp_store=MEMORY;")
+    }
+
+    /// True (and arms shutdown) once the hardened script budget is exhausted.
+    /// A *script* budget, not a per-query interrupt — it stops the run between
+    /// statements but can't interrupt one long-running statement.
+    private func budgetExceeded() -> Bool {
+        guard let deadline, Date() > deadline else { return false }
+        err("Error: hardened policy time budget exceeded\n")
+        exitCode = 1
+        shouldQuit = true
+        return true
+    }
+
+    /// Emit rendered result output, enforcing the hardened output-byte cap.
+    /// Returns `false` once the cap is hit so the caller stops emitting further
+    /// result sets. NOTE: this bounds *output* (what flows back to the caller),
+    /// not the engine's per-statement materialization — a true row cap needs
+    /// the SDK stepping API.
+    private func emitResult(_ rendered: String) -> Bool {
+        guard policy.hardened, let cap = policy.maxResultBytes else {
+            out(rendered)
+            return true
+        }
+        if resultCapped { return false }
+        let remaining = cap - resultBytesEmitted
+        let size = rendered.utf8.count
+        if size <= remaining {
+            out(rendered)
+            resultBytesEmitted += size
+            return true
+        }
+        out(Self.truncateToUTF8Bytes(rendered, limit: remaining))
+        out("\n-- output truncated: hardened policy result cap (\(cap) bytes) reached\n")
+        resultCapped = true
+        return false
+    }
+
+    /// Truncate `s` to at most `limit` UTF-8 bytes at a line boundary, so a
+    /// capped CSV/JSON render is cut between rows rather than mid-character.
+    private static func truncateToUTF8Bytes(_ s: String, limit: Int) -> String {
+        guard limit > 0, s.utf8.count > limit else { return s.utf8.count <= limit ? s : "" }
+        var result = ""
+        var count = 0
+        for line in s.split(separator: "\n", omittingEmptySubsequences: false) {
+            let lineBytes = line.utf8.count + 1   // include the newline
+            if count + lineBytes > limit { break }
+            result += String(line) + "\n"
+            count += lineBytes
+        }
+        return result
     }
 
     private func out(_ s: String) {
@@ -209,6 +348,7 @@ final class Session {
         func stopsOnError() -> Bool { context == .inline || bail }
         for line in lines {
             if shouldQuit { return true }
+            if budgetExceeded() { return false }
             lineNo += 1
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Dot-commands are only recognized at a statement boundary.
@@ -263,6 +403,7 @@ final class Session {
             // The continuation prompt shows while a statement is still open.
             out(buffer.isEmpty ? "sqlite> " : "   ...> ")
             guard let line = await stdin.readLine() else { out("\n"); break }
+            if budgetExceeded() { break }
             lineNo += 1
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Dot-commands are recognized only at a statement boundary.
@@ -294,16 +435,22 @@ final class Session {
     private func runStatement(_ sql: String, startLine: Int, context: SourceContext) async -> Bool {
         if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
         if eqp { renderQueryPlan(sql) }
+        // Attempted-audit (intent, recorded before execution). No-op unless an
+        // audit destination was configured by the embedder.
+        await audit.record(.attempted(kind: "sql",
+                                       text: sql.trimmingCharacters(in: .whitespacesAndNewlines)))
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
         // `.open` take. (`-safe` blocks ATTACH outright via its authorizer,
         // so this is the non-safe confinement path; `:memory:` / temp ATTACHes
-        // touch no file and are skipped.)
+        // touch no file and are skipped. In hardened mode ATTACH also fails via
+        // SQLITE_LIMIT_ATTACHED=0, so this canonicalize+authorize only matters
+        // on the permissive path.)
         if !safeMode, sql.range(of: "attach", options: .caseInsensitive) != nil {
             for target in database.attachTargets(in: sql)
             where !target.isEmpty && target != ":memory:" {
                 do {
-                    try await Shell.authorize(Shell.resolve(target))
+                    try await Shell.authorize(Self.canonicalize(Shell.resolve(target)))
                 } catch {
                     err("Error: \(error)\n")
                     exitCode = 1
@@ -313,7 +460,7 @@ final class Session {
         }
         do {
             for set in try database.evaluate(sql) {
-                out(formatter.render(set))
+                if !emitResult(formatter.render(set)) { break }
             }
             if changesMode {
                 out("changes: \(database.changes)   total_changes: \(database.totalChanges)\n")
@@ -418,6 +565,10 @@ final class Session {
         let tokens = Self.tokenize(line)
         guard let command = tokens.first else { return }
         let args = Array(tokens.dropFirst())
+
+        // Attempted-audit: a dot-command is an LLM-controlled in-band action,
+        // so it belongs in the trail just like a SQL statement.
+        await audit.record(.attempted(kind: "dot", text: line))
 
         // `-safe` refuses any dot-command that could touch the filesystem or
         // shell, and aborts — matching sqlite3. (SQL-level restrictions like
@@ -782,7 +933,11 @@ final class Session {
                 let replacement = try SQLiteDatabase(location)
                 database.close()
                 database = replacement
-                if safeMode { database.enableSafeMode() }   // re-arm on the new connection
+                // Re-apply the full policy to the new handle, not just safe
+                // mode — otherwise an LLM could shed the hardened limits / temp
+                // pinning by reconnecting via `.open` (control-surface rule).
+                if safeMode { database.enableSafeMode() }
+                applyHardening(to: database)
                 filename = path   // as-typed, matching sqlite3's `.show`
             } catch let error as SQLiteError {
                 err("Error: \(error.message)\n")
@@ -818,7 +973,9 @@ final class Session {
     /// Converts a user-supplied path to a sandbox URL and asks the host to
     /// authorize it. Returns `nil` (after reporting) if denied.
     private func resolveAuthorized(_ path: String) async -> URL? {
-        let url = Shell.resolve(path)
+        // Canonicalize before authorizing so the authorized path is the same
+        // symlink-resolved string the file op then uses (see canonicalize()).
+        let url = Sqlite3Executable.canonicalize(Shell.resolve(path))
         do {
             try await Shell.authorize(url)
             return url
@@ -863,6 +1020,16 @@ final class Session {
             return
         }
         if args.count >= 2, let newValue = Int32(args[1]) {
+            // `.limit` is another LLM-controlled in-band channel: under a
+            // hardened policy it may show or *lower* a limit, but a raise above
+            // the current value is refused — otherwise `.limit attached 10`
+            // would undo applyHardening()'s SQLITE_LIMIT_ATTACHED=0.
+            if policy.hardened, newValue > database.limit(entry.code) {
+                err("Error: cannot raise limit \"\(entry.name)\" under hardened policy\n")
+                exitCode = 1
+                show(entry.name, entry.code)
+                return
+            }
             database.limit(entry.code, newValue: newValue)
         }
         show(entry.name, entry.code)

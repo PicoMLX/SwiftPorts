@@ -18,23 +18,42 @@ import ShellKit
 /// command participates fully in pipes / redirection / `$(...)` capture.
 public struct Sqlite3Builtin: Command {
 
-    public init() {}
+    /// The trusted security policy, bound by the embedder. `nil` means
+    /// "automatic": harden when the host shell is sandboxed (see `run`). The
+    /// command line cannot weaken whatever is resolved here — see ``SQLitePolicy``.
+    private let policy: SQLitePolicy?
+
+    public init(policy: SQLitePolicy? = nil) {
+        self.policy = policy
+    }
 
     public let name = "sqlite3"
 
     public func run(_ argv: [String]) async throws -> ExitStatus {
         // `Sqlite3Executable` expects argv WITHOUT the command name, per the
         // `execve` convention — the same handoff the standalone executable
-        // makes. Everything else is passed through verbatim: the driver does
-        // SQLite's single-dash long-option parsing (`-csv`, `-header`,
-        // `-separator X`, …), `--version` / `--help`, dot-command dispatch,
-        // and the REPL. No flag is intercepted here, so the builtin behaves
-        // identically to `sqlite3` run standalone.
+        // makes. SQLite's single-dash long-option parsing, `--version` /
+        // `--help`, dot-command dispatch, and the REPL all happen there.
+        //
+        // The security policy, by contrast, is resolved HERE (the trusted
+        // registration site), never from argv: an embedder-supplied policy is
+        // used as-is, otherwise we harden automatically whenever the host shell
+        // has a sandbox bound — because then the SQL is agent-driven and
+        // untrusted, and no command-line flag should be able to opt out.
+        let resolved = policy ?? Self.automaticPolicy()
         let code = try await Sqlite3Executable.run(
             argv: Array(argv.dropFirst()),
+            policy: resolved,
             stdin: Shell.current.stdin,
             stdout: Shell.current.stdout,
             stderr: Shell.current.stderr)
         return ExitStatus(code)
+    }
+
+    /// Secure default: hardened when a sandbox is active, permissive otherwise
+    /// (e.g. a developer's own un-sandboxed shell, where parity with real
+    /// sqlite3 is wanted).
+    private static func automaticPolicy() -> SQLitePolicy {
+        Shell.current.sandbox != nil ? .hardened() : .permissive
     }
 }
