@@ -67,7 +67,7 @@ public actor FileAuditSink: AuditSink {
     }
 
     public func record(_ event: AuditEvent) async {
-        var blob = Data((event.jsonLine + "\n").utf8)
+        let blob = Data((event.jsonLine + "\n").utf8)
         let fd = openLog()
         guard fd >= 0 else { Self.reportFailure(url: url); return }
         defer { close(fd) }
@@ -82,14 +82,24 @@ public actor FileAuditSink: AuditSink {
         }
     }
 
+    /// Open the log for an atomic append. Try the open first and create the
+    /// parent directory only on ENOENT, so the common (directory-exists) path
+    /// is a single syscall rather than a `createDirectory` on every record.
     /// O_APPEND keeps each flush atomic; O_CREAT makes the log on first write
     /// (mode 0600); O_NOFOLLOW rejects a leaf swapped to a symlink.
     private func openLog() -> Int32 {
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        return url.path.withCString {
-            open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0o600)
+        let path = url.path
+        var fd = path.withCString {
+            open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, mode_t(0o600))
         }
+        if fd < 0 && errno == ENOENT {
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            fd = path.withCString {
+                open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, mode_t(0o600))
+            }
+        }
+        return fd
     }
 
     /// Surface an audit-write failure on stderr rather than silently dropping

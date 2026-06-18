@@ -302,15 +302,12 @@ final class Session {
     /// capped CSV/JSON render is cut between rows rather than mid-character.
     private static func truncateToUTF8Bytes(_ s: String, limit: Int) -> String {
         guard limit > 0, s.utf8.count > limit else { return s.utf8.count <= limit ? s : "" }
-        var result = ""
-        var count = 0
-        for line in s.split(separator: "\n", omittingEmptySubsequences: false) {
-            let lineBytes = line.utf8.count + 1   // include the newline
-            if count + lineBytes > limit { break }
-            result += String(line) + "\n"
-            count += lineBytes
-        }
-        return result
+        // Work on just the first `limit` bytes and cut at the last newline in
+        // them — no need to split the (potentially huge) whole string. A
+        // newline byte is a UTF-8 / Character boundary, so the slice is valid.
+        let prefix = s.utf8.prefix(limit)
+        guard let lastNewline = prefix.lastIndex(of: 0x0A) else { return "" }
+        return String(s[...lastNewline])
     }
 
     private func out(_ s: String) {
