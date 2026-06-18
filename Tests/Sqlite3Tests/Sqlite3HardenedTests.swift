@@ -210,6 +210,24 @@ import Testing
         #expect(r.stderr.contains("temp_store"))
     }
 
+    /// The VACUUM-INTO guard must not refuse a *string literal* that merely
+    /// mentions the keywords — that's ordinary SQL, and hardened mode preserves
+    /// the SQL feature surface.
+    @Test func hardenedAllowsVacuumIntoInsideStringLiteral() async throws {
+        let r = try await run([":memory:", "SELECT 'vacuum into' AS x;"], policy: .hardened())
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("vacuum into"))
+    }
+
+    /// A read-only policy (even without hardened mode) blocks ATTACH, which
+    /// would otherwise open a writable auxiliary database in-band.
+    @Test func readOnlyPolicyBlocksAttach() async throws {
+        let policy = SQLitePolicy(hardened: false, forceReadOnly: true)
+        let r = try await run([":memory:", "ATTACH ':memory:' AS aux;"], policy: policy)
+        #expect(r.exit != 0)
+        #expect(!r.stderr.isEmpty)
+    }
+
     /// The temp_store guard also catches quoted-identifier forms like
     /// `PRAGMA "temp_store"=…`.
     @Test func hardenedBlocksQuotedTempStore() async throws {

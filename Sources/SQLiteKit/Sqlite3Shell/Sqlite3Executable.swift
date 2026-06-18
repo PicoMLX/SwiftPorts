@@ -280,8 +280,13 @@ final class Session {
     /// confinement can't be shed by reconnecting to a new database. It does
     /// not touch the authorizer / PRAGMA / vtables, so vec0 + FTS5 keep working.
     private func applyHardening(to db: SQLiteDatabase) {
+        // Disable ATTACH under *either* a read-only or hardened policy: ATTACH
+        // opens a writable auxiliary DB, an in-band file write that read-only
+        // mode must also block (matching the .backup / VACUUM INTO guards).
+        if policy.hardened || policy.forceReadOnly {
+            db.limit(SQLitePolicy.limitAttached, newValue: 0)
+        }
         guard policy.hardened else { return }
-        db.limit(SQLitePolicy.limitAttached, newValue: 0)
         db.limit(SQLitePolicy.limitLength, newValue: SQLitePolicy.lengthCeiling)
         db.limit(SQLitePolicy.limitSQLLength, newValue: SQLitePolicy.sqlLengthCeiling)
         _ = try? db.evaluate("PRAGMA temp_store=MEMORY;")
@@ -320,21 +325,28 @@ final class Session {
     /// evasion-proof fix is the SDK compile flag SQLITE_TEMP_STORE=3.
     private static func setsTempStore(_ sql: String) -> Bool {
         // Best-effort lexical guard (defense-in-depth; the boundary is the SDK
-        // SQLITE_TEMP_STORE=3). Strip comments first — SQLite treats them as
-        // token separators. Allow: an optional (possibly quoted) schema
-        // qualifier; the name quoted as "temp_store", [temp_store], or
-        // `temp_store`; and no space before a quote (`PRAGMA"temp_store"`).
-        // Quote chars: " [ ] ` (backtick = \x60).
-        strippedOfComments(sql).range(
+        // SQLITE_TEMP_STORE=3). Anchored to PRAGMA; matches the name bare or as
+        // a quoted *identifier* — "temp_store", [temp_store], `temp_store`
+        // (quote chars " [ ] `, backtick = \x60) — with an optional schema
+        // qualifier and no required space before a quote.
+        // ACCEPTED GAP: a name written as a single-quoted *string*
+        // (`PRAGMA 'temp_store'`, a SQLite quirk) is stripped as a literal by
+        // strippedForGuards, so it isn't caught — telling that from a value
+        // literal needs a real tokenizer (the SDK). We prioritize zero false
+        // positives on legitimate SQL over catching that exotic form.
+        strippedForGuards(sql).range(
             of: #"(?i)\bpragma\b\s*(?:[\"\[\x60]?\w+[\"\]\x60]?\s*\.\s*)?[\"\[\x60]?temp_store[\"\]\x60]?\s*[=(]"#,
             options: .regularExpression) != nil
     }
 
-    /// True if `sql` performs `VACUUM … INTO …` (a direct file write). Comments
-    /// are stripped first so `VACUUM/**/INTO` is caught.
+    /// True if `sql` performs `VACUUM [schema] INTO …` (a direct file write).
+    /// Matches only the keywords (with at most a schema name between them) on
+    /// string/comment-stripped SQL, so a value literal like `SELECT 'vacuum
+    /// into'` is not misread as a file write.
     private static func writesViaVacuumInto(_ sql: String) -> Bool {
-        strippedOfComments(sql).range(
-            of: #"(?i)\bvacuum\b[^;]*\binto\b"#, options: .regularExpression) != nil
+        strippedForGuards(sql).range(
+            of: #"(?i)\bvacuum\b\s+(?:[\"\[\x60]?\w+[\"\]\x60]?\s+)?into\b"#,
+            options: .regularExpression) != nil
     }
 
     /// Bound a single audited record's size so an oversized untrusted statement
@@ -346,13 +358,16 @@ final class Session {
         return String(decoding: text.utf8.prefix(maxAuditTextBytes), as: UTF8.self) + "…[truncated]"
     }
 
-    /// Remove SQL comments (`/* … */` and `-- …`) so the lexical policy guards
-    /// can't be bypassed by interleaving a comment between tokens. Used for
-    /// detection only; the original SQL is what actually executes. (A `/*` or
-    /// `--` inside a string literal is over-stripped, which can only cause a
-    /// false *positive* — acceptable under a strict hardened policy.)
-    private static func strippedOfComments(_ sql: String) -> String {
+    /// Strip single-quoted string literals and SQL comments so the lexical
+    /// policy guards match only real keywords/identifiers — never text inside a
+    /// literal or comment (which would wrongly refuse statements like
+    /// `SELECT 'vacuum into'`). Detection only; the original SQL executes.
+    /// Strings are stripped first so a comment marker inside a string (`'-- x'`)
+    /// isn't mistaken for a comment.
+    private static func strippedForGuards(_ sql: String) -> String {
         var s = sql.replacingOccurrences(
+            of: #"'(?:[^']|'')*'"#, with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(
             of: #"(?s)/\*.*?\*/"#, with: " ", options: .regularExpression)
         s = s.replacingOccurrences(
             of: #"--[^\n]*"#, with: " ", options: .regularExpression)

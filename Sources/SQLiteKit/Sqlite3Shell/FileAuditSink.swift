@@ -35,11 +35,11 @@ public actor FileAuditSink: AuditSink {
 
     @discardableResult
     public func record(_ event: AuditEvent) async -> Bool {
-        if let message = appendBytes(Data((event.jsonLine + "\n").utf8)) {
-            Self.reportFailure(url: url, reason: message)
-            return false
-        }
-        return true
+        // On failure just return false — the caller (recording before execution)
+        // fails closed and reports through the shell's own stderr sink. We
+        // deliberately don't write here: a process-global stderr write would
+        // bypass the embedder's virtual stderr/pipeline and leak the host path.
+        appendBytes(Data((event.jsonLine + "\n").utf8)) == nil
     }
 
     /// Atomically append `blob` to the log, creating the file (and parent
@@ -106,11 +106,4 @@ public actor FileAuditSink: AuditSink {
         return fd
     }
 #endif
-
-    /// Surface an audit-write failure on stderr rather than silently dropping
-    /// records — the trail matters most exactly when writes fail.
-    private static func reportFailure(url: URL, reason: String) {
-        FileHandle.standardError.write(
-            Data("sqlite3: AUDIT WRITE FAILED for \(url.path): \(reason)\n".utf8))
-    }
 }
