@@ -43,6 +43,24 @@ public enum Sqlite3Executable {
             break
         }
 
+        // Build the (embedder-controlled) audit destination FIRST so an explicit
+        // request fails closed before any SQL runs — and so the log file exists
+        // before the database-path check below, letting `canonicalize` resolve a
+        // database path that is a symlink to the (otherwise not-yet-created) log.
+        let audit: any AuditSink
+        if let auditURL = policy.auditURL {
+            let sink = FileAuditSink(url: auditURL)
+            do {
+                try await sink.preflight()
+            } catch {
+                stderr.write("sqlite3: Error: cannot open audit log \"\(auditURL.path)\": \(error)\n")
+                return 1
+            }
+            audit = sink
+        } else {
+            audit = NoOpAuditSink()
+        }
+
         // Resolve + authorize the database file through ShellKit so the
         // tool honors the host's sandbox / path mapping. A missing name or
         // ":memory:" means a transient in-memory database.
@@ -53,8 +71,9 @@ public enum Sqlite3Executable {
             // — but does not eliminate — the symlink-swap window: fully closing
             // it needs SQLITE_OPEN_NOFOLLOW, which lives in the SDK open.
             let url = canonicalize(Shell.resolve(path))
-            // The database file must not be the audit log itself, or the run
-            // would use one file for both SQLite storage and the trusted JSONL
+            // The database file must not be the audit log itself (directly or via
+            // a symlink — the log now exists, so canonicalize resolves it), or the
+            // run would use one file for both SQLite storage and the trusted JSONL
             // trail (defeating "audit lives outside the DB").
             if let auditURL = policy.auditURL, canonicalize(auditURL).path == url.path {
                 stderr.write("sqlite3: Error: the database path may not be the audit log\n")
@@ -69,22 +88,6 @@ public enum Sqlite3Executable {
             location = .file(url.path)
         } else {
             location = .memory
-        }
-
-        // Build the (embedder-controlled) audit destination up front so an
-        // explicit request fails closed before any SQL runs.
-        let audit: any AuditSink
-        if let auditURL = policy.auditURL {
-            let sink = FileAuditSink(url: auditURL)
-            do {
-                try await sink.preflight()
-            } catch {
-                stderr.write("sqlite3: Error: cannot open audit log \"\(auditURL.path)\": \(error)\n")
-                return 1
-            }
-            audit = sink
-        } else {
-            audit = NoOpAuditSink()
         }
 
         let database: SQLiteDatabase
@@ -316,11 +319,14 @@ final class Session {
     /// used to refuse temp-store changes under a hardened policy; the
     /// evasion-proof fix is the SDK compile flag SQLITE_TEMP_STORE=3.
     private static func setsTempStore(_ sql: String) -> Bool {
-        // Strip comments first — SQLite treats them as token separators, so
-        // `PRAGMA/**/temp_store=FILE` is a set too. Allow an optional schema
-        // qualifier (`main.`, …): `PRAGMA main.temp_store = FILE`.
+        // Best-effort lexical guard (defense-in-depth; the boundary is the SDK
+        // SQLITE_TEMP_STORE=3). Strip comments first — SQLite treats them as
+        // token separators. Allow: an optional (possibly quoted) schema
+        // qualifier; the name quoted as "temp_store", [temp_store], or
+        // `temp_store`; and no space before a quote (`PRAGMA"temp_store"`).
+        // Quote chars: " [ ] ` (backtick = \x60).
         strippedOfComments(sql).range(
-            of: #"(?i)pragma\s+(?:\w+\s*\.\s*)?temp_store\s*[=(]"#,
+            of: #"(?i)\bpragma\b\s*(?:[\"\[\x60]?\w+[\"\]\x60]?\s*\.\s*)?[\"\[\x60]?temp_store[\"\]\x60]?\s*[=(]"#,
             options: .regularExpression) != nil
     }
 
@@ -329,6 +335,15 @@ final class Session {
     private static func writesViaVacuumInto(_ sql: String) -> Bool {
         strippedOfComments(sql).range(
             of: #"(?i)\bvacuum\b[^;]*\binto\b"#, options: .regularExpression) != nil
+    }
+
+    /// Bound a single audited record's size so an oversized untrusted statement
+    /// can't bloat the out-of-DB JSONL trail. (SQLITE_LIMIT_SQL_LENGTH also caps
+    /// the SQL, but only at prepare time — after this record is written.)
+    private static let maxAuditTextBytes = 64 * 1024
+    private static func cappedAuditText(_ text: String) -> String {
+        guard text.utf8.count > maxAuditTextBytes else { return text }
+        return String(decoding: text.utf8.prefix(maxAuditTextBytes), as: UTF8.self) + "…[truncated]"
     }
 
     /// Remove SQL comments (`/* … */` and `-- …`) so the lexical policy guards
@@ -495,7 +510,8 @@ final class Session {
         // can't be written, refuse the statement. No-op (always true) unless an
         // audit destination was configured by the embedder.
         if await audit.record(.attempted(
-            kind: "sql", text: sql.trimmingCharacters(in: .whitespacesAndNewlines))) == false {
+            kind: "sql",
+            text: Self.cappedAuditText(sql.trimmingCharacters(in: .whitespacesAndNewlines)))) == false {
             err("Error: audit write failed; refusing to run unaudited statement\n")
             exitCode = 1
             shouldQuit = true
@@ -657,7 +673,7 @@ final class Session {
         // Attempted-audit: a dot-command is an LLM-controlled in-band action,
         // so it belongs in the trail just like a SQL statement — and fails
         // closed the same way (no audit, no action).
-        if await audit.record(.attempted(kind: "dot", text: line)) == false {
+        if await audit.record(.attempted(kind: "dot", text: Self.cappedAuditText(line))) == false {
             err("Error: audit write failed; refusing unaudited command\n")
             exitCode = 1
             shouldQuit = true

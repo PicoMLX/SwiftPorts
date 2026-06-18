@@ -210,6 +210,15 @@ import Testing
         #expect(r.stderr.contains("temp_store"))
     }
 
+    /// The temp_store guard also catches quoted-identifier forms like
+    /// `PRAGMA "temp_store"=…`.
+    @Test func hardenedBlocksQuotedTempStore() async throws {
+        let r = try await run([":memory:"], policy: .hardened(),
+                              input: "PRAGMA \"temp_store\"=FILE;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("temp_store"))
+    }
+
     /// The initial database path may not be the audit log either (not just
     /// dot-command targets).
     @Test func databasePathMayNotBeAuditLog() async throws {
