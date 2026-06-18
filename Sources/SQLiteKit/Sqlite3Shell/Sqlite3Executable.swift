@@ -53,6 +53,13 @@ public enum Sqlite3Executable {
             // — but does not eliminate — the symlink-swap window: fully closing
             // it needs SQLITE_OPEN_NOFOLLOW, which lives in the SDK open.
             let url = canonicalize(Shell.resolve(path))
+            // The database file must not be the audit log itself, or the run
+            // would use one file for both SQLite storage and the trusted JSONL
+            // trail (defeating "audit lives outside the DB").
+            if let auditURL = policy.auditURL, canonicalize(auditURL).path == url.path {
+                stderr.write("sqlite3: Error: the database path may not be the audit log\n")
+                return 1
+            }
             do {
                 try await Shell.authorize(url)
             } catch {
@@ -278,8 +285,12 @@ final class Session {
     }
 
     /// True (and arms shutdown) once the hardened script budget is exhausted.
-    /// A *script* budget, not a per-query interrupt — it stops the run between
-    /// statements but can't interrupt one long-running statement.
+    /// Checked between input chunks. This is a coarse *script* budget, not a
+    /// per-query interrupt: it cannot interrupt one long-running statement, and
+    /// because the shell hands a whole `;`-separated chunk to a single
+    /// `evaluate`, it also can't preempt *between* statements within one chunk.
+    /// Real per-statement / mid-query enforcement needs the SDK progress
+    /// handler + `sqlite3_interrupt` (see Docs/PORTING-FROM-SWIFTSQLITE.md).
     private func budgetExceeded() -> Bool {
         guard let deadline, Date() > deadline else { return false }
         err("Error: hardened policy time budget exceeded\n")
@@ -305,10 +316,32 @@ final class Session {
     /// used to refuse temp-store changes under a hardened policy; the
     /// evasion-proof fix is the SDK compile flag SQLITE_TEMP_STORE=3.
     private static func setsTempStore(_ sql: String) -> Bool {
-        // Allow an optional schema qualifier (`main.`, `temp.`, …) before the
-        // pragma name, which SQLite accepts: `PRAGMA main.temp_store = FILE`.
-        sql.range(of: #"(?i)pragma\s+(?:\w+\s*\.\s*)?temp_store\s*[=(]"#,
-                  options: .regularExpression) != nil
+        // Strip comments first — SQLite treats them as token separators, so
+        // `PRAGMA/**/temp_store=FILE` is a set too. Allow an optional schema
+        // qualifier (`main.`, …): `PRAGMA main.temp_store = FILE`.
+        strippedOfComments(sql).range(
+            of: #"(?i)pragma\s+(?:\w+\s*\.\s*)?temp_store\s*[=(]"#,
+            options: .regularExpression) != nil
+    }
+
+    /// True if `sql` performs `VACUUM … INTO …` (a direct file write). Comments
+    /// are stripped first so `VACUUM/**/INTO` is caught.
+    private static func writesViaVacuumInto(_ sql: String) -> Bool {
+        strippedOfComments(sql).range(
+            of: #"(?i)\bvacuum\b[^;]*\binto\b"#, options: .regularExpression) != nil
+    }
+
+    /// Remove SQL comments (`/* … */` and `-- …`) so the lexical policy guards
+    /// can't be bypassed by interleaving a comment between tokens. Used for
+    /// detection only; the original SQL is what actually executes. (A `/*` or
+    /// `--` inside a string literal is over-stripped, which can only cause a
+    /// false *positive* — acceptable under a strict hardened policy.)
+    private static func strippedOfComments(_ sql: String) -> String {
+        var s = sql.replacingOccurrences(
+            of: #"(?s)/\*.*?\*/"#, with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(
+            of: #"--[^\n]*"#, with: " ", options: .regularExpression)
+        return s
     }
 
     /// The central stdout path. In hardened mode it enforces the output-byte
@@ -476,6 +509,15 @@ final class Session {
         // SQLITE_TEMP_STORE=3 — see Docs/PORTING-FROM-SWIFTSQLITE.md.)
         if policy.hardened, Self.setsTempStore(sql) {
             err("Error: PRAGMA temp_store may not be changed under the hardened policy\n")
+            exitCode = 1
+            return false
+        }
+        // `VACUUM INTO 'file'` writes a new database file directly (SQLite opens
+        // it itself, bypassing Shell.authorize and the `.backup` read-only
+        // block — and it works even from a read-only source). Refuse it under a
+        // hardened or read-only policy, the same class as ATTACH/.backup.
+        if policy.hardened || policy.forceReadOnly, Self.writesViaVacuumInto(sql) {
+            err("Error: VACUUM INTO is not permitted under the hardened/read-only policy\n")
             exitCode = 1
             return false
         }

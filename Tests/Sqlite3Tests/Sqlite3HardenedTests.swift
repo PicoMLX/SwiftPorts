@@ -191,4 +191,37 @@ import Testing
                               input: ".output \(auditURL.path)\nSELECT 1;\n")
         #expect(r.stderr.contains("audit log"))
     }
+
+    /// `VACUUM INTO` writes a database file directly (bypassing the sandbox);
+    /// it must be refused under a hardened policy.
+    @Test func hardenedBlocksVacuumInto() async throws {
+        let r = try await run([":memory:"], policy: .hardened(),
+                              input: "VACUUM INTO 'out.db';\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("VACUUM INTO"))
+    }
+
+    /// The temp_store guard strips SQL comments, so `PRAGMA/**/temp_store=…`
+    /// can't slip past it.
+    @Test func hardenedBlocksCommentedTempStore() async throws {
+        let r = try await run([":memory:"], policy: .hardened(),
+                              input: "PRAGMA/**/temp_store=FILE;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("temp_store"))
+    }
+
+    /// The initial database path may not be the audit log either (not just
+    /// dot-command targets).
+    @Test func databasePathMayNotBeAuditLog() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-dbpath-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auditURL = dir.appendingPathComponent("trail.jsonl")
+
+        let policy = SQLitePolicy(hardened: true, auditURL: auditURL)
+        let r = try await run([auditURL.path, "SELECT 1;"], policy: policy)
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("audit log"))
+    }
 }
