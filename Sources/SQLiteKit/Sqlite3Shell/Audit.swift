@@ -29,15 +29,21 @@ public enum AuditEvent: Sendable {
 
 /// Where audit events are flushed. Implementations must write **outside** the
 /// database under audit, so a free-form `DROP`/`DELETE` cannot erase its trail.
+///
+/// `record` returns `false` if the event could not be durably recorded. A
+/// caller that records *before* execution treats a `false` as fail-closed —
+/// it must not run the action, since audit is a trusted policy control.
 public protocol AuditSink: Sendable {
-    func record(_ event: AuditEvent) async
+    @discardableResult
+    func record(_ event: AuditEvent) async -> Bool
 }
 
 /// An `AuditSink` that discards everything — used when no audit destination is
-/// configured. Accumulates nothing, so a long run can't grow memory.
+/// configured. Accumulates nothing, so a long run can't grow memory. Always
+/// "succeeds" (there is nothing to fail), so it never blocks execution.
 public struct NoOpAuditSink: AuditSink {
     public init() {}
-    public func record(_ event: AuditEvent) async {}
+    public func record(_ event: AuditEvent) async -> Bool { true }
 }
 
 /// An `AuditSink` that appends one JSON object per event (JSON Lines) to a host
@@ -66,20 +72,23 @@ public actor FileAuditSink: AuditSink {
         close(fd)
     }
 
-    public func record(_ event: AuditEvent) async {
+    @discardableResult
+    public func record(_ event: AuditEvent) async -> Bool {
         let blob = Data((event.jsonLine + "\n").utf8)
         let fd = openLog()
-        guard fd >= 0 else { Self.reportFailure(url: url); return }
+        guard fd >= 0 else { Self.reportFailure(url: url); return false }
         defer { close(fd) }
+        var ok = true
         blob.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.baseAddress else { return }
             var written = 0
             while written < raw.count {
                 let n = write(fd, base + written, raw.count - written)
-                if n <= 0 { Self.reportFailure(url: url); return }
+                if n <= 0 { Self.reportFailure(url: url); ok = false; return }
                 written += n
             }
         }
+        return ok
     }
 
     /// Open the log for an atomic append. Try the open first and create the

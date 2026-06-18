@@ -65,3 +65,8 @@ Each cites the SwiftSQLite source that implements it.
    gate `SQLITE_DQS=0` / `SQLITE_USE_URI=0` behind the hardened path so they don't
    change default sqlite3 behavior. Verify all still build with the `FTS5` /
    `SQLiteVec` traits.
+7. **`SQLITE_TEMP_STORE=3`** (always-memory, PRAGMA cannot change it) is the
+   definitive temp-confinement fix. The shell re-pins `PRAGMA temp_store=MEMORY`
+   before each hardened statement to undo an in-band `PRAGMA temp_store=FILE`, but
+   that is best-effort; the compile flag removes the need entirely. (Codex review
+   P2, PR #1.)

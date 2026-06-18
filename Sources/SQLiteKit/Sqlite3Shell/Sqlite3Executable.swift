@@ -202,10 +202,12 @@ final class Session {
     private let audit: any AuditSink
     /// Hardened-mode wall-clock script budget; `nil` when no timeout is set.
     private let deadline: Date?
-    /// Rendered result bytes emitted so far, for the hardened output cap.
-    private var resultBytesEmitted = 0
-    /// Set once the output cap has been hit, to suppress further result output.
-    private var resultCapped = false
+    /// Bytes written to stdout so far, for the hardened output cap. Counts
+    /// ALL data output (result sets *and* data-bearing dot-commands), so the
+    /// cap can't be sidestepped by routing output through `.dump` / `.schema`.
+    private var outputBytesEmitted = 0
+    /// Set once the output cap has been hit, to suppress further output.
+    private var outputCapped = false
     /// Input line number of the dot-command currently dispatching, for the
     /// `-safe` refusal message (0 for a command-line argument).
     private var safeLine = 0
@@ -274,30 +276,6 @@ final class Session {
         return true
     }
 
-    /// Emit rendered result output, enforcing the hardened output-byte cap.
-    /// Returns `false` once the cap is hit so the caller stops emitting further
-    /// result sets. NOTE: this bounds *output* (what flows back to the caller),
-    /// not the engine's per-statement materialization — a true row cap needs
-    /// the SDK stepping API.
-    private func emitResult(_ rendered: String) -> Bool {
-        guard policy.hardened, let cap = policy.maxResultBytes else {
-            out(rendered)
-            return true
-        }
-        if resultCapped { return false }
-        let remaining = cap - resultBytesEmitted
-        let size = rendered.utf8.count
-        if size <= remaining {
-            out(rendered)
-            resultBytesEmitted += size
-            return true
-        }
-        out(Self.truncateToUTF8Bytes(rendered, limit: remaining))
-        out("\n-- output truncated: hardened policy result cap (\(cap) bytes) reached\n")
-        resultCapped = true
-        return false
-    }
-
     /// Truncate `s` to at most `limit` UTF-8 bytes at a line boundary, so a
     /// capped CSV/JSON render is cut between rows rather than mid-character.
     private static func truncateToUTF8Bytes(_ s: String, limit: Int) -> String {
@@ -310,7 +288,30 @@ final class Session {
         return String(s[...lastNewline])
     }
 
+    /// The central stdout path. In hardened mode it enforces the output-byte
+    /// cap across ALL data written here — SQL result sets and data-bearing
+    /// dot-commands (`.dump` / `.schema` / `.print` / …) alike — so an untrusted
+    /// script can't exfiltrate unbounded output by routing it through a
+    /// dot-command (or a `.output` redirect, which also flows through here).
+    /// This bounds *output* (what flows back to the caller), not the engine's
+    /// per-statement materialization — a true row cap needs the SDK stepping API.
     private func out(_ s: String) {
+        guard policy.hardened, let cap = policy.maxResultBytes else { rawOut(s); return }
+        if outputCapped { return }
+        let remaining = cap - outputBytesEmitted
+        if s.utf8.count <= remaining {
+            outputBytesEmitted += s.utf8.count
+            rawOut(s)
+        } else {
+            rawOut(Self.truncateToUTF8Bytes(s, limit: remaining))
+            rawOut("\n-- output truncated: hardened policy output cap (\(cap) bytes) reached\n")
+            outputCapped = true
+        }
+    }
+
+    /// Raw write to stdout or the active `.output`/`.once` redirect, bypassing
+    /// the cap (used by `out` itself to emit the truncation notice).
+    private func rawOut(_ s: String) {
         if redirect != nil { redirect!.buffer += s } else { stdout.write(s) }
     }
     private func err(_ s: String) { stderr.write(s) }
@@ -432,10 +433,23 @@ final class Session {
     private func runStatement(_ sql: String, startLine: Int, context: SourceContext) async -> Bool {
         if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
         if eqp { renderQueryPlan(sql) }
-        // Attempted-audit (intent, recorded before execution). No-op unless an
-        // audit destination was configured by the embedder.
-        await audit.record(.attempted(kind: "sql",
-                                       text: sql.trimmingCharacters(in: .whitespacesAndNewlines)))
+        // Attempted-audit (intent, recorded BEFORE execution). Fail closed: if
+        // the trail can't be written, refuse to run the statement — an audited
+        // boundary must not let unaudited actions through. No-op (always true)
+        // unless an audit destination was configured by the embedder.
+        if await audit.record(.attempted(
+            kind: "sql", text: sql.trimmingCharacters(in: .whitespacesAndNewlines))) == false {
+            err("Error: audit write failed; refusing to run unaudited statement\n")
+            exitCode = 1
+            shouldQuit = true
+            return false
+        }
+        // Re-pin temp storage before each statement under a hardened policy:
+        // PRAGMA is still allowed, so an untrusted `PRAGMA temp_store=FILE;`
+        // would otherwise undo the startup setting and let later sorts spill to
+        // disk. (The definitive fix is the SDK compile flag SQLITE_TEMP_STORE=3
+        // — see Docs/PORTING-FROM-SWIFTSQLITE.md.)
+        if policy.hardened { _ = try? database.evaluate("PRAGMA temp_store=MEMORY;") }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
         // `.open` take. (`-safe` blocks ATTACH outright via its authorizer,
@@ -457,7 +471,8 @@ final class Session {
         }
         do {
             for set in try database.evaluate(sql) {
-                if !emitResult(formatter.render(set)) { break }
+                out(formatter.render(set))
+                if outputCapped { break }   // stop rendering further sets once capped
             }
             if changesMode {
                 out("changes: \(database.changes)   total_changes: \(database.totalChanges)\n")
@@ -564,8 +579,14 @@ final class Session {
         let args = Array(tokens.dropFirst())
 
         // Attempted-audit: a dot-command is an LLM-controlled in-band action,
-        // so it belongs in the trail just like a SQL statement.
-        await audit.record(.attempted(kind: "dot", text: line))
+        // so it belongs in the trail just like a SQL statement — and fails
+        // closed the same way (no audit, no action).
+        if await audit.record(.attempted(kind: "dot", text: line)) == false {
+            err("Error: audit write failed; refusing unaudited command\n")
+            exitCode = 1
+            shouldQuit = true
+            return
+        }
 
         // `-safe` refuses any dot-command that could touch the filesystem or
         // shell, and aborts — matching sqlite3. (SQL-level restrictions like
@@ -927,7 +948,9 @@ final class Session {
                 location = .memory
             }
             do {
-                let replacement = try SQLiteDatabase(location)
+                // Honor the trusted read-only policy on the new handle too —
+                // otherwise `.open writable.db` would relax forceReadOnly in-band.
+                let replacement = try SQLiteDatabase(location, readonly: policy.forceReadOnly)
                 database.close()
                 database = replacement
                 // Re-apply the full policy to the new handle, not just safe

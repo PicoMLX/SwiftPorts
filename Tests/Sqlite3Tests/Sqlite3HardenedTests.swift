@@ -121,4 +121,41 @@ import Testing
         #expect(trail.contains("\"event\":\"attempted\""))
         #expect(trail.contains("SELECT 1"))
     }
+
+    /// The output cap must also bound data-bearing dot-commands (`.dump`,
+    /// `.schema`, `.print`), not just SQL result sets — otherwise an untrusted
+    /// script could exfiltrate unbounded output through a dot-command.
+    @Test func hardenedCapsDotCommandOutput() async throws {
+        let policy = SQLitePolicy(hardened: true, maxResultBytes: 16)
+        let long = String(repeating: "A", count: 500)
+        let r = try await run([":memory:"], policy: policy, input: ".print \(long)\n")
+        #expect(r.stdout.contains("-- output truncated"))
+        #expect(!r.stdout.contains(long))
+    }
+
+    /// Hardened mode re-pins `temp_store=MEMORY` before each statement, so an
+    /// untrusted `PRAGMA temp_store=FILE;` can't make later temp spill to disk.
+    @Test func hardenedRepinsTempStore() async throws {
+        let r = try await run([":memory:"], policy: .hardened(),
+                              input: "PRAGMA temp_store=FILE;\nPRAGMA temp_store;\n")
+        // 2 == MEMORY; the FILE (1) override was undone before the read.
+        #expect(r.stdout.contains("2"))
+        #expect(!r.stdout.contains("1"))
+    }
+
+    /// Audit is a trusted control recorded before execution: if its
+    /// destination is unwritable, the run must fail closed rather than execute
+    /// unaudited SQL. (Here the audit path is a directory, so the open fails.)
+    @Test func hardenedFailsClosedWhenAuditUnwritable() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-dir-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let policy = SQLitePolicy(hardened: true, auditURL: dir)
+        let r = try await run([":memory:", "SELECT 1;"], policy: policy)
+        #expect(r.exit == 1)
+        #expect(!r.stdout.contains("1"))   // SQL never ran
+        #expect(r.stderr.contains("audit log"))
+    }
 }
