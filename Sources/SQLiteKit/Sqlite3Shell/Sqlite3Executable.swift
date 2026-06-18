@@ -168,9 +168,16 @@ public enum Sqlite3Executable {
     }
 
     private static func realpathOrNil(_ path: String) -> String? {
+#if canImport(Darwin) || canImport(Glibc)
         guard let c = realpath(path, nil) else { return nil }
         defer { free(c) }
         return String(cString: c)
+#else
+        // Windows / non-POSIX: best-effort symlink resolution via Foundation,
+        // returning nil for a non-existent path to mirror realpath's contract.
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+#endif
     }
 }
 
@@ -200,6 +207,10 @@ final class Session {
     private let policy: SQLitePolicy
     /// Attempted-audit sink (no-op unless an audit destination was configured).
     private let audit: any AuditSink
+    /// Canonical path of the audit log, if any — reserved so in-band
+    /// file-touching dot-commands (`.output`/`.backup`/…) can't overwrite the
+    /// trusted trail they were just appended to.
+    private let auditCanonicalPath: String?
     /// Hardened-mode wall-clock script budget; `nil` when no timeout is set.
     private let deadline: Date?
     /// Bytes written to stdout so far, for the hardened output cap. Counts
@@ -248,6 +259,7 @@ final class Session {
         self.safeMode = safeMode
         self.policy = policy
         self.audit = audit
+        self.auditCanonicalPath = policy.auditURL.map { Sqlite3Executable.canonicalize($0).path }
         self.deadline = policy.statementTimeout.map { Date().addingTimeInterval($0) }
         applyHardening(to: database)
     }
@@ -293,7 +305,10 @@ final class Session {
     /// used to refuse temp-store changes under a hardened policy; the
     /// evasion-proof fix is the SDK compile flag SQLITE_TEMP_STORE=3.
     private static func setsTempStore(_ sql: String) -> Bool {
-        sql.range(of: #"(?i)pragma\s+temp_store\s*[=(]"#, options: .regularExpression) != nil
+        // Allow an optional schema qualifier (`main.`, `temp.`, …) before the
+        // pragma name, which SQLite accepts: `PRAGMA main.temp_store = FILE`.
+        sql.range(of: #"(?i)pragma\s+(?:\w+\s*\.\s*)?temp_store\s*[=(]"#,
+                  options: .regularExpression) != nil
     }
 
     /// The central stdout path. In hardened mode it enforces the output-byte
@@ -876,6 +891,14 @@ final class Session {
             importDelimited(text, into: args[1])
 
         case ".backup":
+            // `.backup` creates/writes a database file — a write the trusted
+            // read-only policy must not allow in-band (the destination can't be
+            // opened read-only and still receive the backup).
+            if policy.forceReadOnly {
+                err("Error: .backup is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
             guard let (dbName, path) = Self.dbAndFile(args) else {
                 err("Error: .backup expects ?DB? FILE\n")
                 return
@@ -894,6 +917,14 @@ final class Session {
             }
 
         case ".restore":
+            // `.restore` writes into the main database, which is read-only under
+            // the policy; refuse explicitly rather than surface a raw SQLite
+            // "readonly database" error.
+            if policy.forceReadOnly {
+                err("Error: .restore is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
             guard let (dbName, path) = Self.dbAndFile(args) else {
                 err("Error: .restore expects ?DB? FILE\n")
                 return
@@ -1028,6 +1059,12 @@ final class Session {
         // Canonicalize before authorizing so the authorized path is the same
         // symlink-resolved string the file op then uses (see canonicalize()).
         let url = Sqlite3Executable.canonicalize(Shell.resolve(path))
+        // Reserve the audit log: a file-touching dot-command must not target it,
+        // or an in-band `.output <auditURL>` could overwrite the trusted trail.
+        if let auditCanonicalPath, url.path == auditCanonicalPath {
+            err("Error: cannot direct a command at the audit log\n")
+            return nil
+        }
         do {
             try await Shell.authorize(url)
             return url

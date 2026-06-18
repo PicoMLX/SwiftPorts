@@ -158,4 +158,37 @@ import Testing
         #expect(!r.stdout.contains("1"))   // SQL never ran
         #expect(r.stderr.contains("audit log"))
     }
+
+    /// The temp_store deny also catches the schema-qualified form
+    /// `PRAGMA main.temp_store = …`.
+    @Test func hardenedBlocksSchemaQualifiedTempStore() async throws {
+        let r = try await run([":memory:"], policy: .hardened(),
+                              input: "PRAGMA main.temp_store=FILE;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("temp_store"))
+    }
+
+    /// A forced read-only policy blocks `.backup` (which would create/write a
+    /// database file in-band despite the policy).
+    @Test func readOnlyPolicyBlocksBackup() async throws {
+        let policy = SQLitePolicy(hardened: true, forceReadOnly: true)
+        let r = try await run([":memory:"], policy: policy, input: ".backup out.db\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("read-only policy"))
+    }
+
+    /// A file-touching dot-command may not target the audit log itself, or an
+    /// in-band `.output <auditURL>` could overwrite the trusted trail.
+    @Test func auditLogPathIsReservedFromDotCommands() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-reserve-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auditURL = dir.appendingPathComponent("trail.jsonl")
+
+        let policy = SQLitePolicy(hardened: true, auditURL: auditURL)
+        let r = try await run([":memory:"], policy: policy,
+                              input: ".output \(auditURL.path)\nSELECT 1;\n")
+        #expect(r.stderr.contains("audit log"))
+    }
 }
