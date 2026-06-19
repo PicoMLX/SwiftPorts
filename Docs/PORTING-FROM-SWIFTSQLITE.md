@@ -29,7 +29,9 @@ working; harden only the escape/DoS boundary.
 - **Embedder-bound `SQLitePolicy`** + automatic hardening under a sandbox; argv
   `-hardened` is tighten-only.
 - **Result output cap** (`maxResultBytes`) with a truncation notice — bounds what
-  flows back to the caller / `$(…)`.
+  flows back to the caller / `$(…)`. Covers stdout, stderr, **and** the pre-`Session`
+  error path in `run` (argv-parse / open failures, whose messages can echo the argv),
+  so none of those channels can stream an uncapped payload back.
 - **Runtime limits** via `database.limit`: `SQLITE_LIMIT_ATTACHED=0`, `…_LENGTH`,
   `…_SQL_LENGTH`; **`.limit` raise-blocking** so the in-band channel can't undo them.
 - **`PRAGMA temp_store=MEMORY`** to keep temp spill in-region.

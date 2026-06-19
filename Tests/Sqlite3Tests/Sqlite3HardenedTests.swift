@@ -275,4 +275,20 @@ import Testing
         #expect(r.exit == 1)
         #expect(r.stderr.contains("audit log"))
     }
+
+    /// An argv parse failure happens *before* the `Session` (and its capped
+    /// `emit`) exists, so the early stderr write must honor the output cap too —
+    /// otherwise an untrusted `sqlite3 -<many bytes>`, whose "unknown option"
+    /// error echoes the oversized argv, streams an uncapped error back despite
+    /// the hardened cap. (Codex review P2, PR #1.)
+    @Test func hardenedCapsPreSessionParseError() async throws {
+        let policy = SQLitePolicy(hardened: true, maxResultBytes: 8)
+        let huge = "-" + String(repeating: "z", count: 4096)   // unknown long option
+        let r = try await run([huge, ":memory:"], policy: policy)
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("-- output truncated"))
+        // The oversized argv is not echoed back uncapped.
+        #expect(r.stderr.utf8.count < 200)
+        #expect(!r.stderr.contains(String(repeating: "z", count: 64)))
+    }
 }

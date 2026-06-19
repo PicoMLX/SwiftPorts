@@ -22,7 +22,7 @@ public enum Sqlite3Executable {
         do {
             options = try Parser.parse(argv)
         } catch let error as Parser.ArgError {
-            stderr.write("sqlite3: Error: \(error.message)\n")
+            writeError("sqlite3: Error: \(error.message)\n", policy: policy, to: stderr)
             return 1
         }
 
@@ -56,7 +56,7 @@ public enum Sqlite3Executable {
                 // Don't echo the raw host path of the (embedder-set) audit log
                 // to the untrusted command's stderr. The thrown error carries an
                 // errno message (e.g. "Permission denied"), not the path.
-                stderr.write("sqlite3: Error: cannot open the configured audit log: \(error)\n")
+                writeError("sqlite3: Error: cannot open the configured audit log: \(error)\n", policy: policy, to: stderr)
                 return 1
             }
             audit = sink
@@ -81,14 +81,14 @@ public enum Sqlite3Executable {
             if let auditURL = policy.auditURL {
                 let auditPath = canonicalize(auditURL).path
                 if auditPath == url.path || sameFile(auditPath, url.path) {
-                    stderr.write("sqlite3: Error: the database path may not be the audit log\n")
+                    writeError("sqlite3: Error: the database path may not be the audit log\n", policy: policy, to: stderr)
                     return 1
                 }
             }
             do {
                 try await Shell.authorize(url)
             } catch {
-                stderr.write("sqlite3: Error: \(error)\n")
+                writeError("sqlite3: Error: \(error)\n", policy: policy, to: stderr)
                 return 1
             }
             location = .file(url.path)
@@ -101,7 +101,7 @@ public enum Sqlite3Executable {
             database = try SQLiteDatabase(location,
                                           readonly: options.readonly || policy.forceReadOnly)
         } catch let error as SQLiteError {
-            stderr.write("sqlite3: Error: \(error.message)\n")
+            writeError("sqlite3: Error: \(error.message)\n", policy: policy, to: stderr)
             return 1
         }
         // -safe also gates SQL-level filesystem access (ATTACH / load_extension)
@@ -221,6 +221,27 @@ public enum Sqlite3Executable {
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
 #endif
+    }
+
+    /// Emit a pre-`Session` error to stderr, honoring the hardened output cap.
+    /// The argv-parse / audit / authorize / open failures in `run` above all run
+    /// *before* the `Session` (and its capped `emit`) exists, so under a hardened
+    /// policy an untrusted invocation like `sqlite3 -<many MB>` — whose parse
+    /// error echoes the oversized argv — could otherwise stream an uncapped error
+    /// back to the caller, bypassing `maxResultBytes`. Cap here too, mirroring
+    /// `Session.emit`. Plain byte-prefix truncation (an error is one logical
+    /// line, so keep the "sqlite3: Error:" prefix); `String(decoding:)` lands on
+    /// a valid scalar boundary. (Codex review P2, PR #1.)
+    private static func writeError(_ message: String,
+                                   policy: SQLitePolicy,
+                                   to stderr: OutputSink) {
+        guard policy.hardened, let cap = policy.maxResultBytes,
+              message.utf8.count > cap else {
+            stderr.write(message)
+            return
+        }
+        stderr.write(String(decoding: message.utf8.prefix(cap), as: UTF8.self)
+            + "\n-- output truncated: hardened policy output cap (\(cap) bytes) reached\n")
     }
 }
 
