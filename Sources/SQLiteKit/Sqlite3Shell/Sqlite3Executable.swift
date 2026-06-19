@@ -235,8 +235,15 @@ public enum Sqlite3Executable {
     private static func writeError(_ message: String,
                                    policy: SQLitePolicy,
                                    to stderr: OutputSink) {
-        guard policy.hardened, let cap = policy.maxResultBytes,
-              message.utf8.count > cap else {
+        guard policy.hardened, let rawCap = policy.maxResultBytes else {
+            stderr.write(message)
+            return
+        }
+        // `maxResultBytes` is public config; a negative value would trap
+        // `prefix(_:)`. Clamp to ≥ 0, mirroring Session.emit, which already
+        // tolerates non-positive caps. (Codex review P3, PR #1.)
+        let cap = max(0, rawCap)
+        guard message.utf8.count > cap else {
             stderr.write(message)
             return
         }

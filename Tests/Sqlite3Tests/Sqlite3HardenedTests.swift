@@ -291,4 +291,16 @@ import Testing
         #expect(r.stderr.utf8.count < 200)
         #expect(!r.stderr.contains(String(repeating: "z", count: 64)))
     }
+
+    /// `maxResultBytes` is public config: a negative value must not trap the
+    /// pre-`Session` cap (it's clamped to 0). The run returning at all proves no
+    /// `prefix(_:)` trap, and the oversized argv is still not echoed back.
+    /// (Codex review P3, PR #1.)
+    @Test func hardenedNegativeCapDoesNotTrapPreSessionError() async throws {
+        let policy = SQLitePolicy(hardened: true, maxResultBytes: -1)
+        let huge = "-" + String(repeating: "z", count: 4096)
+        let r = try await run([huge, ":memory:"], policy: policy)
+        #expect(r.exit == 1)
+        #expect(!r.stderr.contains(String(repeating: "z", count: 64)))
+    }
 }

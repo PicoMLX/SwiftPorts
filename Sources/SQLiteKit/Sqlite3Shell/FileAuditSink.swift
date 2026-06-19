@@ -76,7 +76,13 @@ public actor FileAuditSink: AuditSink {
             }
             return nil
         } catch {
-            return String(describing: error)
+            // Sanitize: Foundation file errors (createDirectory/FileHandle) embed
+            // NSFilePath/NSURL in their description, which `run` would echo to the
+            // untrusted command's stderr — leaking the embedder-set audit path
+            // despite the POSIX branch's path-free errno text. Surface only the
+            // error domain/code (never the raw description). (Codex review P2, PR #1.)
+            let ns = error as NSError
+            return "audit log unavailable (\(ns.domain) \(ns.code))"
         }
 #endif
     }
@@ -91,16 +97,20 @@ public actor FileAuditSink: AuditSink {
     /// parent directory only on ENOENT, so the common (directory-exists) path
     /// is a single syscall rather than a `createDirectory` on every record.
     /// O_APPEND keeps each flush atomic; O_CREAT makes the log on first write
-    /// (mode 0600); O_NOFOLLOW rejects a leaf swapped to a symlink.
+    /// (mode 0600); O_NOFOLLOW rejects a leaf swapped to a symlink; O_NONBLOCK
+    /// makes an O_WRONLY open of a reader-less FIFO fail fast with ENXIO instead
+    /// of blocking preflight indefinitely (the fstat below then rejects any FIFO
+    /// that does open). O_NONBLOCK has no effect on writes to the regular file we
+    /// require, so the append path is unchanged.
     private func openLogPOSIX() -> Int32 {
         let path = url.path
         var fd = path.withCString {
-            open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, mode_t(0o600))
+            open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK, mode_t(0o600))
         }
         if fd < 0 && errno == ENOENT {
             try? ensureDirectory()
             fd = path.withCString {
-                open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, mode_t(0o600))
+                open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK, mode_t(0o600))
             }
         }
         guard fd >= 0 else { return fd }
