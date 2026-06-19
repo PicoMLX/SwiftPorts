@@ -133,14 +133,17 @@ import Testing
         #expect(!r.stdout.contains(long))
     }
 
-    /// Hardened mode refuses an in-band `PRAGMA temp_store=FILE;` (so later
-    /// sorts/temp tables can't spill to disk) while still allowing a read. The
-    /// startup `temp_store=MEMORY` (2) therefore holds.
-    @Test func hardenedBlocksTempStoreChange() async throws {
+    /// Hardened mode does not lexically refuse `PRAGMA temp_store=FILE;` (that
+    /// guard proved unsound — see Sqlite3Executable.runStatement). Instead temp
+    /// confinement holds by *re-pinning* temp_store=MEMORY before every
+    /// statement: even after a statement sets it to FILE, the next read sees
+    /// MEMORY (2). So later sorts/temp tables still can't spill across a
+    /// statement boundary.
+    @Test func hardenedRepinsTempStoreAcrossStatements() async throws {
         let r = try await run([":memory:"], policy: .hardened(),
                               input: "PRAGMA temp_store=FILE;\nPRAGMA temp_store;\n")
-        #expect(r.stderr.contains("temp_store"))   // the set was refused
-        #expect(r.stdout.contains("2"))            // still MEMORY when read back
+        #expect(r.exit == 0)                       // not refused — the set runs
+        #expect(r.stdout.contains("2"))            // re-pinned to MEMORY on read
     }
 
     /// Audit is a trusted control recorded before execution: if its
@@ -157,15 +160,6 @@ import Testing
         #expect(r.exit == 1)
         #expect(!r.stdout.contains("1"))   // SQL never ran
         #expect(r.stderr.contains("audit log"))
-    }
-
-    /// The temp_store deny also catches the schema-qualified form
-    /// `PRAGMA main.temp_store = …`.
-    @Test func hardenedBlocksSchemaQualifiedTempStore() async throws {
-        let r = try await run([":memory:"], policy: .hardened(),
-                              input: "PRAGMA main.temp_store=FILE;\n")
-        #expect(r.exit == 1)
-        #expect(r.stderr.contains("temp_store"))
     }
 
     /// A forced read-only policy blocks `.backup` (which would create/write a
@@ -199,15 +193,6 @@ import Testing
                               input: "VACUUM INTO 'out.db';\n")
         #expect(r.exit == 1)
         #expect(r.stderr.contains("VACUUM INTO"))
-    }
-
-    /// The temp_store guard strips SQL comments, so `PRAGMA/**/temp_store=…`
-    /// can't slip past it.
-    @Test func hardenedBlocksCommentedTempStore() async throws {
-        let r = try await run([":memory:"], policy: .hardened(),
-                              input: "PRAGMA/**/temp_store=FILE;\n")
-        #expect(r.exit == 1)
-        #expect(r.stderr.contains("temp_store"))
     }
 
     /// The VACUUM-INTO guard must not refuse a *string literal* that merely
@@ -255,15 +240,6 @@ import Testing
         let r = try await run([":memory:"], policy: policy,
                               input: ".nope a fairly long unknown dot-command line\n")
         #expect(r.stderr.contains("-- output truncated"))
-    }
-
-    /// The temp_store guard also catches quoted-identifier forms like
-    /// `PRAGMA "temp_store"=…`.
-    @Test func hardenedBlocksQuotedTempStore() async throws {
-        let r = try await run([":memory:"], policy: .hardened(),
-                              input: "PRAGMA \"temp_store\"=FILE;\n")
-        #expect(r.exit == 1)
-        #expect(r.stderr.contains("temp_store"))
     }
 
     /// The initial database path may not be the audit log either (not just

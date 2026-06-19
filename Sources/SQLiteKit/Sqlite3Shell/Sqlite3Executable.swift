@@ -183,17 +183,21 @@ public enum Sqlite3Executable {
         return url
     }
 
-    /// True if the two paths refer to the same existing file — by file identity
-    /// (inode), so a hard link or alternate name to the same file is caught even
-    /// when the path strings differ. Returns false if either doesn't exist
-    /// (callers also do an exact canonical-path comparison for that case).
+    /// True if the two paths refer to the same existing file — by POSIX device +
+    /// inode identity, so a hard link or alternate name to the same file is
+    /// caught even when the path strings differ. Returns false if either doesn't
+    /// exist (callers also do an exact canonical-path comparison for that case).
+    /// (Foundation's `fileResourceIdentifierKey` is unreliable on Linux — it
+    /// returns nil — so we stat directly.)
     static func sameFile(_ a: String, _ b: String) -> Bool {
-        let keys: Set<URLResourceKey> = [.fileResourceIdentifierKey]
-        guard
-            let idA = try? URL(fileURLWithPath: a).resourceValues(forKeys: keys).fileResourceIdentifier,
-            let idB = try? URL(fileURLWithPath: b).resourceValues(forKeys: keys).fileResourceIdentifier
-        else { return false }
-        return idA.isEqual(idB)
+#if canImport(Darwin) || canImport(Glibc)
+        var sa = stat(), sb = stat()
+        guard a.withCString({ stat($0, &sa) }) == 0,
+              b.withCString({ stat($0, &sb) }) == 0 else { return false }
+        return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino
+#else
+        return false   // non-POSIX: rely on the canonical-path comparison
+#endif
     }
 
     private static func realpathOrNil(_ path: String) -> String? {
@@ -338,35 +342,15 @@ final class Session {
         return String(s[...lastNewline])
     }
 
-    /// True if `sql` *sets* `temp_store` (`PRAGMA temp_store = …` or
-    /// `temp_store(…)`), as opposed to a bare read. Best-effort lexical match
-    /// used to refuse temp-store changes under a hardened policy; the
-    /// evasion-proof fix is the SDK compile flag SQLITE_TEMP_STORE=3.
-    private static func setsTempStore(_ sql: String) -> Bool {
-        // Best-effort lexical guard (defense-in-depth; the boundary is the SDK
-        // SQLITE_TEMP_STORE=3). **Anchored to a statement boundary** (`^` or
-        // after `;`) so the PRAGMA keyword is only matched where it acts as one,
-        // never inside a value like `SELECT "pragma temp_store=("`. Matches the
-        // name bare or as a quoted *identifier* — "temp_store", [temp_store],
-        // `temp_store` (quote chars " [ ] `, backtick = \x60) — with an optional
-        // schema qualifier and no required space before a quote.
-        // ACCEPTED GAP: a name written as a single-quoted *string*
-        // (`PRAGMA 'temp_store'`, a SQLite quirk) is stripped as a literal by
-        // strippedForGuards, so it isn't caught — telling that from a value
-        // literal needs a real tokenizer (the SDK). We prioritize zero false
-        // positives on legitimate SQL over catching that exotic form.
-        strippedForGuards(sql).range(
-            of: #"(?i)(?:^|;)\s*pragma\b\s*(?:[\"\[\x60]?\w+[\"\]\x60]?\s*\.\s*)?[\"\[\x60]?temp_store[\"\]\x60]?\s*[=(]"#,
-            options: .regularExpression) != nil
-    }
-
     /// True if `sql` performs `VACUUM [schema] INTO …` (a direct file write).
-    /// **Anchored to a statement boundary** so a value like `SELECT 'vacuum
-    /// into'` / `SELECT "vacuum into"` (where VACUUM isn't the leading keyword)
-    /// is never misread as a file write; matches only the real statement form.
+    /// **Anchored to a statement boundary**, on string/comment-stripped SQL, so
+    /// a value like `SELECT 'vacuum into'` / `SELECT "x; vacuum into y"` (where
+    /// VACUUM isn't the leading keyword) is never misread as a file write;
+    /// matches only the real statement form. (VACUUM/INTO are keywords with no
+    /// identifier-vs-value ambiguity, so stripping *both* quote styles is safe.)
     private static func writesViaVacuumInto(_ sql: String) -> Bool {
         strippedForGuards(sql).range(
-            of: #"(?i)(?:^|;)\s*vacuum\b\s+(?:[\"\[\x60]?\w+[\"\]\x60]?\s+)?into\b"#,
+            of: #"(?i)(?:^|;)\s*vacuum\b\s+(?:\w+\s+)?into\b"#,
             options: .regularExpression) != nil
     }
 
@@ -379,15 +363,21 @@ final class Session {
         return String(decoding: text.utf8.prefix(maxAuditTextBytes), as: UTF8.self) + "…[truncated]"
     }
 
-    /// Strip single-quoted string literals and SQL comments so the lexical
-    /// policy guards match only real keywords/identifiers — never text inside a
-    /// literal or comment (which would wrongly refuse statements like
-    /// `SELECT 'vacuum into'`). Detection only; the original SQL executes.
-    /// Strings are stripped first so a comment marker inside a string (`'-- x'`)
-    /// isn't mistaken for a comment.
+    /// Strip string literals (both `'…'` and `"…"`) and SQL comments so the
+    /// VACUUM-INTO guard matches only real keywords — never text inside a
+    /// literal or comment (which would wrongly refuse `SELECT 'vacuum into'` or
+    /// `SELECT "x; vacuum into y"`). Detection only; the original SQL executes.
+    /// Stripping double-quoted tokens is safe here because the guard only looks
+    /// for the VACUUM/INTO keywords, which are never identifiers. Strings are
+    /// stripped before comments so a comment marker inside a string isn't
+    /// mistaken for a comment.
     private static func strippedForGuards(_ sql: String) -> String {
         var s = sql.replacingOccurrences(
             of: #"'(?:[^']|'')*'"#, with: " ", options: .regularExpression)
+        // Double-quoted strings (escaped normal literal to avoid raw-string
+        // quote ambiguity): "  (?: [^"] | "" )*  "
+        s = s.replacingOccurrences(
+            of: "\"(?:[^\"]|\"\")*\"", with: " ", options: .regularExpression)
         s = s.replacingOccurrences(
             of: #"(?s)/\*.*?\*/"#, with: " ", options: .regularExpression)
         s = s.replacingOccurrences(
@@ -465,7 +455,8 @@ final class Session {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Dot-commands are only recognized at a statement boundary.
             if buffer.isEmpty && trimmed.hasPrefix(".") {
-                if echo { out(trimmed + "\n") }
+                // Echo happens inside handleDot, *after* the attempted-audit
+                // check, so a fail-closed audit blocks the echo too.
                 // sqlite3 reports a command-line argument as "line 0".
                 safeLine = context == .inline ? 0 : lineNo
                 await handleDot(trimmed)
@@ -521,8 +512,7 @@ final class Session {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Dot-commands are recognized only at a statement boundary.
             if buffer.isEmpty && trimmed.hasPrefix(".") {
-                if echo { out(trimmed + "\n") }
-                safeLine = lineNo
+                safeLine = lineNo   // echo happens inside handleDot, after audit
                 await handleDot(trimmed)
                 continue
             }
@@ -560,17 +550,14 @@ final class Session {
             shouldQuit = true
             return false
         }
-        // Under a hardened policy, refuse a statement that *sets* temp_store:
-        // PRAGMA is otherwise allowed, and a `PRAGMA temp_store=FILE;` (even in
-        // the same multi-statement chunk handed to `evaluate`) would let later
-        // sorts/temp tables spill to disk. Reading it is still fine. (The
-        // definitive, evasion-proof fix is the SDK compile flag
-        // SQLITE_TEMP_STORE=3 — see Docs/PORTING-FROM-SWIFTSQLITE.md.)
-        if policy.hardened, Self.setsTempStore(sql) {
-            err("Error: PRAGMA temp_store may not be changed under the hardened policy\n")
-            exitCode = 1
-            return false
-        }
+        // NOTE: there is intentionally no lexical guard against `PRAGMA
+        // temp_store=…`. Across rounds it proved impossible to detect soundly —
+        // SQLite accepts the pragma name bare or quoted as '…', "…", […], `…`,
+        // and a `;` can appear inside any string, so every regex either missed a
+        // form or refused legitimate value literals. Temp confinement instead
+        // rests on the per-statement re-pin below (reliable across statements)
+        // and, for the within-chunk case, the SDK compile flag
+        // SQLITE_TEMP_STORE=3 (the real boundary — Docs/PORTING-FROM-SWIFTSQLITE.md).
         // `VACUUM INTO 'file'` writes a new database file directly (SQLite opens
         // it itself, bypassing Shell.authorize and the `.backup` read-only
         // block — and it works even from a read-only source). Refuse it under a
@@ -582,8 +569,11 @@ final class Session {
         }
         if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
         if eqp { renderQueryPlan(sql) }
-        // Belt-and-suspenders: re-pin temp_store=MEMORY before each statement in
-        // case the guard above was evaded (e.g. an interleaved comment).
+        // Re-pin temp_store=MEMORY before each statement: even if an earlier
+        // statement set it to FILE, the next one is forced back to MEMORY, so
+        // temp confinement holds across statement boundaries. (The within-chunk
+        // case — temp_store=FILE and a spilling query in one evaluate() — is
+        // covered by the SDK compile flag SQLITE_TEMP_STORE=3.)
         if policy.hardened { _ = try? database.evaluate("PRAGMA temp_store=MEMORY;") }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
@@ -722,6 +712,10 @@ final class Session {
             shouldQuit = true
             return
         }
+
+        // `-echo` mirrors the command back *after* it's been audited, so a
+        // fail-closed audit suppresses the echo too (no echo without a trail).
+        if echo { out(line + "\n") }
 
         // `-safe` refuses any dot-command that could touch the filesystem or
         // shell, and aborts — matching sqlite3. (SQL-level restrictions like
@@ -1171,6 +1165,7 @@ final class Session {
         if let auditCanonicalPath,
            url.path == auditCanonicalPath || Sqlite3Executable.sameFile(url.path, auditCanonicalPath) {
             err("Error: cannot direct a command at the audit log\n")
+            exitCode = 1   // make the policy denial observable, like other refusals
             return nil
         }
         do {

@@ -103,6 +103,17 @@ public actor FileAuditSink: AuditSink {
                 open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, mode_t(0o600))
             }
         }
+        guard fd >= 0 else { return fd }
+        // O_NOFOLLOW rejects a leaf *symlink*, but an existing FIFO, device, or
+        // socket at the path is still opened — writing the trail into one would
+        // lose records (or block). Require a regular file; otherwise fail the
+        // open so the audit fails closed rather than writing to a non-file.
+        var info = stat()
+        if fstat(fd, &info) != 0 || (info.st_mode & mode_t(S_IFMT)) != mode_t(S_IFREG) {
+            close(fd)
+            errno = EINVAL
+            return -1
+        }
         return fd
     }
 #endif
