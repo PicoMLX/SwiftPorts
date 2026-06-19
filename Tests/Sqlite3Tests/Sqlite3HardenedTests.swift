@@ -195,6 +195,21 @@ import Testing
         #expect(r.stderr.contains("VACUUM INTO"))
     }
 
+    /// The VACUUM-INTO guard must also catch a *quoted* schema name, which
+    /// SQLite accepts — `VACUUM [main] INTO …` and ``VACUUM `main` INTO …`` —
+    /// or those forms would skip the guard and write a file directly.
+    @Test func hardenedBlocksQuotedSchemaVacuumInto() async throws {
+        let bracket = try await run([":memory:"], policy: .hardened(),
+                                    input: "VACUUM [main] INTO 'out.db';\n")
+        #expect(bracket.exit == 1)
+        #expect(bracket.stderr.contains("VACUUM INTO"))
+
+        let backtick = try await run([":memory:"], policy: .hardened(),
+                                     input: "VACUUM `main` INTO 'out.db';\n")
+        #expect(backtick.exit == 1)
+        #expect(backtick.stderr.contains("VACUUM INTO"))
+    }
+
     /// The VACUUM-INTO guard must not refuse a *string literal* that merely
     /// mentions the keywords — that's ordinary SQL, and hardened mode preserves
     /// the SQL feature surface.

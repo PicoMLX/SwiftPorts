@@ -188,7 +188,9 @@ public enum Sqlite3Executable {
     /// caught even when the path strings differ. Returns false if either doesn't
     /// exist (callers also do an exact canonical-path comparison for that case).
     /// (Foundation's `fileResourceIdentifierKey` is unreliable on Linux — it
-    /// returns nil — so we stat directly.)
+    /// returns nil — so on Darwin/Glibc we stat directly. On other platforms
+    /// (Windows) there's no POSIX inode, so we fall back to that Foundation
+    /// file id, which is the best identity check available there.)
     static func sameFile(_ a: String, _ b: String) -> Bool {
 #if canImport(Darwin) || canImport(Glibc)
         var sa = stat(), sb = stat()
@@ -196,7 +198,15 @@ public enum Sqlite3Executable {
               b.withCString({ stat($0, &sb) }) == 0 else { return false }
         return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino
 #else
-        return false   // non-POSIX: rely on the canonical-path comparison
+        // Non-POSIX (Windows): no inode. Use Foundation's file id so a hard
+        // link / alternate name to the configured audit log is still caught
+        // (best-effort, matching FileAuditSink's Windows leaf-guard caveat).
+        let keys: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard
+            let idA = try? URL(fileURLWithPath: a).resourceValues(forKeys: keys).fileResourceIdentifier,
+            let idB = try? URL(fileURLWithPath: b).resourceValues(forKeys: keys).fileResourceIdentifier
+        else { return false }
+        return idA.isEqual(idB)
 #endif
     }
 
@@ -348,9 +358,13 @@ final class Session {
     /// VACUUM isn't the leading keyword) is never misread as a file write;
     /// matches only the real statement form. (VACUUM/INTO are keywords with no
     /// identifier-vs-value ambiguity, so stripping *both* quote styles is safe.)
+    /// The optional schema name accepts every identifier-quoting SQLite allows:
+    /// bare (`\w+`), bracketed (`[main]`), and back-quoted (`` `main` ``). A
+    /// double-quoted schema (`"main"`) is already removed by strippedForGuards,
+    /// collapsing to whitespace that the `(?:…)?` simply skips.
     private static func writesViaVacuumInto(_ sql: String) -> Bool {
         strippedForGuards(sql).range(
-            of: #"(?i)(?:^|;)\s*vacuum\b\s+(?:\w+\s+)?into\b"#,
+            of: #"(?i)(?:^|;)\s*vacuum\b\s+(?:(?:\w+|\[[^\]]*\]|\x60[^\x60]*\x60)\s+)?into\b"#,
             options: .regularExpression) != nil
     }
 
@@ -481,6 +495,13 @@ final class Session {
                 return false
             }
         }
+        // The final completed statement runs inside the loop above (the per-
+        // iteration check only fires *before* the next line), and the leftover
+        // check is skipped when there's no trailing fragment — so without this
+        // a last statement that overran the deadline would still exit 0.
+        // budgetExceeded() sets exitCode=1; guard on shouldQuit so a budget
+        // already reported above (or a .quit) isn't re-reported.
+        if !shouldQuit { _ = budgetExceeded() }
         return true
     }
 
