@@ -303,4 +303,17 @@ import Testing
         #expect(r.exit == 1)
         #expect(!r.stderr.contains(String(repeating: "z", count: 64)))
     }
+
+    /// The temp_store re-pin must fail closed, not silently swallow its error:
+    /// lowering `.limit sql_length` below the re-pin pragma's length (an in-band,
+    /// "tighten-only" channel) would otherwise leave a prior `temp_store=FILE` in
+    /// effect for the next statement, defeating cross-statement temp confinement.
+    /// (Codex review P1, PR #1.)
+    @Test func hardenedFailsClosedWhenTempStoreRepinStarved() async throws {
+        let r = try await run(
+            [":memory:"], policy: .hardened(),
+            input: "PRAGMA temp_store=FILE;\n.limit sql_length 10\nSELECT 1;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("temp_store"))
+    }
 }

@@ -22,7 +22,13 @@ public enum Sqlite3Executable {
         do {
             options = try Parser.parse(argv)
         } catch let error as Parser.ArgError {
-            writeError("sqlite3: Error: \(error.message)\n", policy: policy, to: stderr)
+            // argv may have failed to parse, but a standalone `-hardened` request
+            // still means the output cap must apply — the bound policy alone is
+            // permissive on the standalone CLI. Pre-scan the raw argv for it.
+            // (argv can only tighten; over-matching just caps more, never less.)
+            let effective = (policy.hardened || argv.contains("-hardened"))
+                ? policy.tightenedToHardened() : policy
+            writeError("sqlite3: Error: \(error.message)\n", policy: effective, to: stderr)
             return 1
         }
 
@@ -89,6 +95,15 @@ public enum Sqlite3Executable {
                 try await Shell.authorize(url)
             } catch {
                 writeError("sqlite3: Error: \(error)\n", policy: policy, to: stderr)
+                return 1
+            }
+            // Refuse a special file (FIFO/device/socket) as the database under a
+            // hardened/read-only policy: opening it could block before the Session
+            // (and its statementTimeout) exists. (Codex review P2, PR #1.)
+            if policy.hardened || policy.forceReadOnly,
+               !isRegularFileOrAbsent(url.path) {
+                writeError("sqlite3: Error: cannot open a non-regular file as the database under the hardened/read-only policy\n",
+                           policy: policy, to: stderr)
                 return 1
             }
             location = .file(url.path)
@@ -249,6 +264,29 @@ public enum Sqlite3Executable {
         }
         stderr.write(String(decoding: message.utf8.prefix(cap), as: UTF8.self)
             + "\n-- output truncated: hardened policy output cap (\(cap) bytes) reached\n")
+    }
+
+    /// True if `path` is safe to open without risking an indefinite block: it is
+    /// absent (a new file will be created) or an existing *regular* file. A FIFO,
+    /// device, or socket can block the open (e.g. an O_RDONLY/O_WRONLY FIFO with
+    /// no peer) before the `Session` and its `statementTimeout` exist, so reject
+    /// those — the same regular-file rule `FileAuditSink` enforces on its log.
+    /// `lstat` (not `stat`) so a symlink swapped onto the canonical leaf after
+    /// authorization is rejected rather than followed. (Codex review P2, PR #1.)
+    static func isRegularFileOrAbsent(_ path: String) -> Bool {
+#if canImport(Darwin) || canImport(Glibc)
+        var info = stat()
+        let rc = path.withCString { lstat($0, &info) }
+        if rc != 0 { return errno == ENOENT }   // absent → fine (will be created)
+        return (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
+#else
+        // Non-POSIX best-effort: reject an existing directory; FIFO/device/socket
+        // are POSIX concepts not distinguishable here.
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+        else { return true }
+        return !isDir.boolValue
+#endif
     }
 }
 
@@ -643,7 +681,21 @@ final class Session {
         // temp confinement holds across statement boundaries. (The within-chunk
         // case — temp_store=FILE and a spilling query in one evaluate() — is
         // covered by the SDK compile flag SQLITE_TEMP_STORE=3.)
-        if policy.hardened { _ = try? database.evaluate("PRAGMA temp_store=MEMORY;") }
+        if policy.hardened {
+            do {
+                _ = try database.evaluate("PRAGMA temp_store=MEMORY;")
+            } catch {
+                // Fail closed: if the re-pin can't be applied — e.g. an in-band
+                // `.limit sql_length N` lowered the SQL-length limit below this
+                // pragma's length — a later statement could run with a
+                // previously-set temp_store=FILE, silently losing temp
+                // confinement. Refuse rather than proceed. (Codex review P1, PR #1.)
+                err("Error: hardened policy could not re-pin temp_store=MEMORY; refusing to run further statements\n")
+                exitCode = 1
+                shouldQuit = true
+                return false
+            }
+        }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
         // `.open` take. (`-safe` blocks ATTACH outright via its authorizer,
@@ -1239,11 +1291,20 @@ final class Session {
         }
         do {
             try await Shell.authorize(url)
-            return url
         } catch {
             err("Error: \(error)\n")
             return nil
         }
+        // Under a hardened/read-only policy, refuse a special file (FIFO/device/
+        // socket) at the target: opening it could block before the Session's
+        // statementTimeout exists (mirrors FileAuditSink). A new/regular file is fine.
+        if policy.hardened || policy.forceReadOnly,
+           !Sqlite3Executable.isRegularFileOrAbsent(url.path) {
+            err("Error: cannot direct a command at a non-regular file under the hardened/read-only policy\n")
+            exitCode = 1
+            return nil
+        }
+        return url
     }
 
     private func introspect(_ body: () throws -> Void) {
