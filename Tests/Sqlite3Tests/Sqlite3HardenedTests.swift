@@ -228,6 +228,17 @@ import Testing
         #expect(!r.stderr.isEmpty)
     }
 
+    /// The statement-anchored guards must not false-positive on policy keywords
+    /// (or a fake `;`) that appear inside a string *value* rather than as a
+    /// leading statement keyword.
+    @Test func hardenedAllowsGuardKeywordsInsideStringValues() async throws {
+        let r = try await run(
+            [":memory:", "SELECT 'x; PRAGMA temp_store=FILE; VACUUM INTO y' AS k;"],
+            policy: .hardened())
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("PRAGMA temp_store=FILE"))
+    }
+
     /// A read-only policy (even without hardened mode) must also block `.limit`
     /// raises — otherwise `.limit attached 1` would undo the ATTACH lockout.
     @Test func readOnlyPolicyBlocksLimitRaise() async throws {

@@ -78,9 +78,12 @@ public enum Sqlite3Executable {
             // a symlink — the log now exists, so canonicalize resolves it), or the
             // run would use one file for both SQLite storage and the trusted JSONL
             // trail (defeating "audit lives outside the DB").
-            if let auditURL = policy.auditURL, canonicalize(auditURL).path == url.path {
-                stderr.write("sqlite3: Error: the database path may not be the audit log\n")
-                return 1
+            if let auditURL = policy.auditURL {
+                let auditPath = canonicalize(auditURL).path
+                if auditPath == url.path || sameFile(auditPath, url.path) {
+                    stderr.write("sqlite3: Error: the database path may not be the audit log\n")
+                    return 1
+                }
             }
             do {
                 try await Shell.authorize(url)
@@ -178,6 +181,19 @@ public enum Sqlite3Executable {
                 .appendingPathComponent(url.lastPathComponent)
         }
         return url
+    }
+
+    /// True if the two paths refer to the same existing file — by file identity
+    /// (inode), so a hard link or alternate name to the same file is caught even
+    /// when the path strings differ. Returns false if either doesn't exist
+    /// (callers also do an exact canonical-path comparison for that case).
+    static func sameFile(_ a: String, _ b: String) -> Bool {
+        let keys: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard
+            let idA = try? URL(fileURLWithPath: a).resourceValues(forKeys: keys).fileResourceIdentifier,
+            let idB = try? URL(fileURLWithPath: b).resourceValues(forKeys: keys).fileResourceIdentifier
+        else { return false }
+        return idA.isEqual(idB)
     }
 
     private static func realpathOrNil(_ path: String) -> String? {
@@ -328,27 +344,29 @@ final class Session {
     /// evasion-proof fix is the SDK compile flag SQLITE_TEMP_STORE=3.
     private static func setsTempStore(_ sql: String) -> Bool {
         // Best-effort lexical guard (defense-in-depth; the boundary is the SDK
-        // SQLITE_TEMP_STORE=3). Anchored to PRAGMA; matches the name bare or as
-        // a quoted *identifier* — "temp_store", [temp_store], `temp_store`
-        // (quote chars " [ ] `, backtick = \x60) — with an optional schema
-        // qualifier and no required space before a quote.
+        // SQLITE_TEMP_STORE=3). **Anchored to a statement boundary** (`^` or
+        // after `;`) so the PRAGMA keyword is only matched where it acts as one,
+        // never inside a value like `SELECT "pragma temp_store=("`. Matches the
+        // name bare or as a quoted *identifier* — "temp_store", [temp_store],
+        // `temp_store` (quote chars " [ ] `, backtick = \x60) — with an optional
+        // schema qualifier and no required space before a quote.
         // ACCEPTED GAP: a name written as a single-quoted *string*
         // (`PRAGMA 'temp_store'`, a SQLite quirk) is stripped as a literal by
         // strippedForGuards, so it isn't caught — telling that from a value
         // literal needs a real tokenizer (the SDK). We prioritize zero false
         // positives on legitimate SQL over catching that exotic form.
         strippedForGuards(sql).range(
-            of: #"(?i)\bpragma\b\s*(?:[\"\[\x60]?\w+[\"\]\x60]?\s*\.\s*)?[\"\[\x60]?temp_store[\"\]\x60]?\s*[=(]"#,
+            of: #"(?i)(?:^|;)\s*pragma\b\s*(?:[\"\[\x60]?\w+[\"\]\x60]?\s*\.\s*)?[\"\[\x60]?temp_store[\"\]\x60]?\s*[=(]"#,
             options: .regularExpression) != nil
     }
 
     /// True if `sql` performs `VACUUM [schema] INTO …` (a direct file write).
-    /// Matches only the keywords (with at most a schema name between them) on
-    /// string/comment-stripped SQL, so a value literal like `SELECT 'vacuum
-    /// into'` is not misread as a file write.
+    /// **Anchored to a statement boundary** so a value like `SELECT 'vacuum
+    /// into'` / `SELECT "vacuum into"` (where VACUUM isn't the leading keyword)
+    /// is never misread as a file write; matches only the real statement form.
     private static func writesViaVacuumInto(_ sql: String) -> Bool {
         strippedForGuards(sql).range(
-            of: #"(?i)\bvacuum\b\s+(?:[\"\[\x60]?\w+[\"\]\x60]?\s+)?into\b"#,
+            of: #"(?i)(?:^|;)\s*vacuum\b\s+(?:[\"\[\x60]?\w+[\"\]\x60]?\s+)?into\b"#,
             options: .regularExpression) != nil
     }
 
@@ -829,6 +847,10 @@ final class Session {
                     if outputCapped { break }   // stop querying once the cap is hit
                     guard case .text(let name) = t[0], case .text(let createSQL) = t[1] else { continue }
                     out(createSQL + ";\n")
+                    // Emitting the schema line may have hit the cap; don't then
+                    // introspect columns / materialize this table's rows for output
+                    // that would be dropped.
+                    if outputCapped { break }
                     // Quote the table name the way sqlite3 does — bare for a
                     // simple identifier, double-quoted otherwise — so both the
                     // read-back and the emitted INSERTs stay valid for any name.
@@ -1144,7 +1166,10 @@ final class Session {
         let url = Sqlite3Executable.canonicalize(Shell.resolve(path))
         // Reserve the audit log: a file-touching dot-command must not target it,
         // or an in-band `.output <auditURL>` could overwrite the trusted trail.
-        if let auditCanonicalPath, url.path == auditCanonicalPath {
+        // Compare by canonical path AND (for existing files) by file identity,
+        // so a hard link / alternate name to the same inode is also caught.
+        if let auditCanonicalPath,
+           url.path == auditCanonicalPath || Sqlite3Executable.sameFile(url.path, auditCanonicalPath) {
             err("Error: cannot direct a command at the audit log\n")
             return nil
         }
