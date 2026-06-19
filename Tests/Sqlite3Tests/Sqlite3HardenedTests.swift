@@ -228,6 +228,24 @@ import Testing
         #expect(!r.stderr.isEmpty)
     }
 
+    /// A read-only policy (even without hardened mode) must also block `.limit`
+    /// raises — otherwise `.limit attached 1` would undo the ATTACH lockout.
+    @Test func readOnlyPolicyBlocksLimitRaise() async throws {
+        let policy = SQLitePolicy(hardened: false, forceReadOnly: true)
+        let r = try await run([":memory:"], policy: policy, input: ".limit attached 1\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("cannot raise limit"))
+    }
+
+    /// The hardened output cap covers stderr too, so a script can't exfiltrate
+    /// unbounded bytes via error/caret output.
+    @Test func hardenedCapsStderrOutput() async throws {
+        let policy = SQLitePolicy(hardened: true, maxResultBytes: 8)
+        let r = try await run([":memory:"], policy: policy,
+                              input: ".nope a fairly long unknown dot-command line\n")
+        #expect(r.stderr.contains("-- output truncated"))
+    }
+
     /// The temp_store guard also catches quoted-identifier forms like
     /// `PRAGMA "temp_store"=…`.
     @Test func hardenedBlocksQuotedTempStore() async throws {

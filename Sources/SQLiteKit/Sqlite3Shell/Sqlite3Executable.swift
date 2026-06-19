@@ -53,7 +53,10 @@ public enum Sqlite3Executable {
             do {
                 try await sink.preflight()
             } catch {
-                stderr.write("sqlite3: Error: cannot open audit log \"\(auditURL.path)\": \(error)\n")
+                // Don't echo the raw host path of the (embedder-set) audit log
+                // to the untrusted command's stderr. The thrown error carries an
+                // errno message (e.g. "Permission denied"), not the path.
+                stderr.write("sqlite3: Error: cannot open the configured audit log: \(error)\n")
                 return 1
             }
             audit = sink
@@ -374,33 +377,40 @@ final class Session {
         return s
     }
 
-    /// The central stdout path. In hardened mode it enforces the output-byte
-    /// cap across ALL data written here — SQL result sets and data-bearing
-    /// dot-commands (`.dump` / `.schema` / `.print` / …) alike — so an untrusted
-    /// script can't exfiltrate unbounded output by routing it through a
-    /// dot-command (or a `.output` redirect, which also flows through here).
-    /// This bounds *output* (what flows back to the caller), not the engine's
-    /// per-statement materialization — a true row cap needs the SDK stepping API.
-    private func out(_ s: String) {
-        guard policy.hardened, let cap = policy.maxResultBytes else { rawOut(s); return }
+    private func out(_ s: String) { emit(s, toStderr: false) }
+    private func err(_ s: String) { emit(s, toStderr: true) }
+
+    /// The central write path. In hardened mode it enforces the output-byte cap
+    /// across ALL data emitted — stdout (SQL result sets and data-bearing
+    /// dot-commands like `.dump`/`.schema`/`.print`, plus `.output` redirects)
+    /// **and** stderr (errors, caret blocks) — counted against one shared
+    /// budget, so a script can't exfiltrate unbounded bytes through either
+    /// stream. This bounds *output* (what flows back to the caller), not the
+    /// engine's per-statement materialization — a true row cap needs the SDK.
+    private func emit(_ s: String, toStderr: Bool) {
+        guard policy.hardened, let cap = policy.maxResultBytes else {
+            rawWrite(s, toStderr: toStderr); return
+        }
         if outputCapped { return }
         let remaining = cap - outputBytesEmitted
         if s.utf8.count <= remaining {
             outputBytesEmitted += s.utf8.count
-            rawOut(s)
+            rawWrite(s, toStderr: toStderr)
         } else {
-            rawOut(Self.truncateToUTF8Bytes(s, limit: remaining))
-            rawOut("\n-- output truncated: hardened policy output cap (\(cap) bytes) reached\n")
+            rawWrite(Self.truncateToUTF8Bytes(s, limit: remaining), toStderr: toStderr)
+            rawWrite("\n-- output truncated: hardened policy output cap (\(cap) bytes) reached\n",
+                     toStderr: toStderr)
             outputCapped = true
         }
     }
 
-    /// Raw write to stdout or the active `.output`/`.once` redirect, bypassing
-    /// the cap (used by `out` itself to emit the truncation notice).
-    private func rawOut(_ s: String) {
-        if redirect != nil { redirect!.buffer += s } else { stdout.write(s) }
+    /// Raw write to stderr, the active `.output`/`.once` redirect, or stdout,
+    /// bypassing the cap (used by `emit` itself to write the truncation notice).
+    private func rawWrite(_ s: String, toStderr: Bool) {
+        if toStderr { stderr.write(s) }
+        else if redirect != nil { redirect!.buffer += s }
+        else { stdout.write(s) }
     }
-    private func err(_ s: String) { stderr.write(s) }
 
     /// Flushes the current `.output`/`.once` redirect to its file and
     /// reverts to stdout. Called at end of input too.
@@ -1186,8 +1196,8 @@ final class Session {
             // hardened policy it may show or *lower* a limit, but a raise above
             // the current value is refused — otherwise `.limit attached 10`
             // would undo applyHardening()'s SQLITE_LIMIT_ATTACHED=0.
-            if policy.hardened, newValue > database.limit(entry.code) {
-                err("Error: cannot raise limit \"\(entry.name)\" under hardened policy\n")
+            if policy.hardened || policy.forceReadOnly, newValue > database.limit(entry.code) {
+                err("Error: cannot raise limit \"\(entry.name)\" under the hardened/read-only policy\n")
                 exitCode = 1
                 show(entry.name, entry.code)
                 return
