@@ -353,18 +353,22 @@ final class Session {
     }
 
     /// True if `sql` performs `VACUUM [schema] INTO …` (a direct file write).
-    /// **Anchored to a statement boundary**, on string/comment-stripped SQL, so
-    /// a value like `SELECT 'vacuum into'` / `SELECT "x; vacuum into y"` (where
-    /// VACUUM isn't the leading keyword) is never misread as a file write;
-    /// matches only the real statement form. (VACUUM/INTO are keywords with no
-    /// identifier-vs-value ambiguity, so stripping *both* quote styles is safe.)
-    /// The optional schema name accepts every identifier-quoting SQLite allows:
-    /// bare (`\w+`), bracketed (`[main]`), and back-quoted (`` `main` ``). A
-    /// double-quoted schema (`"main"`) is already removed by strippedForGuards,
-    /// collapsing to whitespace that the `(?:…)?` simply skips.
+    /// Runs on string/comment/quoted-identifier-stripped SQL (see
+    /// `strippedForGuards`), so it is **whitespace-insensitive** and immune to
+    /// the quoted-schema forms SQLite accepts — bare, `[main]`, `` `main` ``, or
+    /// `"main"`, adjacent (`VACUUM[main]INTO`) or spaced — all of which collapse
+    /// to `vacuum … into`. **Anchored to a statement boundary** (`^` or after
+    /// `;`) so a value like `SELECT 'vacuum into'` (where VACUUM isn't the
+    /// leading keyword) is never misread. `[^;]` can't cross a real statement
+    /// boundary (no `;` survives inside a stripped literal) and `\binto\b` can't
+    /// match inside an identifier like `into_x`.
+    ///
+    /// Note: this is a *lexical* guard. A fully sound block needs the SQLite
+    /// tokenizer/authorizer (an SDK item — see Docs/PORTING-FROM-SWIFTSQLITE.md),
+    /// since the shell layer only sees the raw SQL string.
     private static func writesViaVacuumInto(_ sql: String) -> Bool {
         strippedForGuards(sql).range(
-            of: #"(?i)(?:^|;)\s*vacuum\b\s+(?:(?:\w+|\[[^\]]*\]|\x60[^\x60]*\x60)\s+)?into\b"#,
+            of: #"(?i)(?:^|;)\s*vacuum\b[^;]*\binto\b"#,
             options: .regularExpression) != nil
     }
 
@@ -377,14 +381,18 @@ final class Session {
         return String(decoding: text.utf8.prefix(maxAuditTextBytes), as: UTF8.self) + "…[truncated]"
     }
 
-    /// Strip string literals (both `'…'` and `"…"`) and SQL comments so the
-    /// VACUUM-INTO guard matches only real keywords — never text inside a
-    /// literal or comment (which would wrongly refuse `SELECT 'vacuum into'` or
-    /// `SELECT "x; vacuum into y"`). Detection only; the original SQL executes.
-    /// Stripping double-quoted tokens is safe here because the guard only looks
-    /// for the VACUUM/INTO keywords, which are never identifiers. Strings are
-    /// stripped before comments so a comment marker inside a string isn't
-    /// mistaken for a comment.
+    /// Strip everything that is *not* a bare keyword/operator so the VACUUM-INTO
+    /// guard matches only real keywords — never text inside a literal, comment,
+    /// or quoted identifier (which would wrongly refuse `SELECT 'vacuum into'` or
+    /// `SELECT [vacuum into]`). Removes string literals (`'…'`, `"…"`), the two
+    /// identifier-quote styles SQLite also accepts (`[…]`, `` `…` ``), and SQL
+    /// comments — collapsing each to a single space. Detection only; the
+    /// original SQL executes. Stripping the quoted forms is safe because the
+    /// only thing the guard looks for is the VACUUM/INTO keywords, which are
+    /// never identifiers or values; removing the quoted spans also lets the
+    /// guard be whitespace-insensitive (an adjacent quoted schema like
+    /// `VACUUM[main]INTO` becomes `VACUUM INTO`). Strings are stripped before
+    /// comments so a comment marker inside a string isn't mistaken for a comment.
     private static func strippedForGuards(_ sql: String) -> String {
         var s = sql.replacingOccurrences(
             of: #"'(?:[^']|'')*'"#, with: " ", options: .regularExpression)
@@ -392,6 +400,12 @@ final class Session {
         // quote ambiguity): "  (?: [^"] | "" )*  "
         s = s.replacingOccurrences(
             of: "\"(?:[^\"]|\"\")*\"", with: " ", options: .regularExpression)
+        // Identifier quotes SQLite accepts in addition to "…": bracketed [name]
+        // and back-quoted `name` (\x60 = backtick).
+        s = s.replacingOccurrences(
+            of: #"\[[^\]]*\]"#, with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(
+            of: #"\x60[^\x60]*\x60"#, with: " ", options: .regularExpression)
         s = s.replacingOccurrences(
             of: #"(?s)/\*.*?\*/"#, with: " ", options: .regularExpression)
         s = s.replacingOccurrences(
@@ -552,6 +566,12 @@ final class Session {
         if !leftover.isEmpty, !shouldQuit, !budgetExceeded() {
             _ = await runStatement(leftover, startLine: statementStart, context: .interactive)
         }
+        // Mirror `process`: re-check the budget after the loop. The final
+        // completed statement runs inside the loop (the per-line check only
+        // fires *before* the next read), and the leftover branch is skipped when
+        // EOF arrives with no trailing fragment — so without this a last
+        // statement that overran statementTimeout would still exit 0.
+        if !shouldQuit { _ = budgetExceeded() }
     }
 
     /// Runs one chunk of SQL and renders any result sets. Returns `false`

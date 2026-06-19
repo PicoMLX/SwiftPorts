@@ -195,19 +195,23 @@ import Testing
         #expect(r.stderr.contains("VACUUM INTO"))
     }
 
-    /// The VACUUM-INTO guard must also catch a *quoted* schema name, which
-    /// SQLite accepts — `VACUUM [main] INTO …` and ``VACUUM `main` INTO …`` —
-    /// or those forms would skip the guard and write a file directly.
+    /// The VACUUM-INTO guard must catch every quoted-schema form SQLite accepts
+    /// — bracketed, back-quoted, and double-quoted — *including* the no-space
+    /// adjacent forms (`VACUUM[main]INTO`), since a quoted identifier is
+    /// self-delimiting. All of these write a file directly and must be refused.
     @Test func hardenedBlocksQuotedSchemaVacuumInto() async throws {
-        let bracket = try await run([":memory:"], policy: .hardened(),
-                                    input: "VACUUM [main] INTO 'out.db';\n")
-        #expect(bracket.exit == 1)
-        #expect(bracket.stderr.contains("VACUUM INTO"))
-
-        let backtick = try await run([":memory:"], policy: .hardened(),
-                                     input: "VACUUM `main` INTO 'out.db';\n")
-        #expect(backtick.exit == 1)
-        #expect(backtick.stderr.contains("VACUUM INTO"))
+        let forms = [
+            "VACUUM [main] INTO 'out.db';",
+            "VACUUM `main` INTO 'out.db';",
+            "VACUUM \"main\" INTO 'out.db';",
+            "VACUUM[main]INTO 'out.db';",          // no spaces around [main]
+            "VACUUM`main`INTO 'out.db';",          // no spaces around `main`
+        ]
+        for sql in forms {
+            let r = try await run([":memory:"], policy: .hardened(), input: sql + "\n")
+            #expect(r.exit == 1, "should refuse: \(sql)")
+            #expect(r.stderr.contains("VACUUM INTO"), "should report VACUUM INTO: \(sql)")
+        }
     }
 
     /// The VACUUM-INTO guard must not refuse a *string literal* that merely

@@ -70,3 +70,12 @@ Each cites the SwiftSQLite source that implements it.
    before each hardened statement to undo an in-band `PRAGMA temp_store=FILE`, but
    that is best-effort; the compile flag removes the need entirely. (Codex review
    P2, PR #1.)
+8. **Sound `VACUUM … INTO` block.** `VACUUM INTO 'file'` writes a database file
+   directly — SQLite opens it itself, bypassing `Shell.authorize`, the `.backup`
+   read-only block, and a read-only source. The shell refuses it under the
+   hardened/read-only policy with a *lexical* guard (`writesViaVacuumInto` on
+   string/comment/quoted-identifier-stripped SQL). That is robust against the
+   quote/whitespace evasions seen so far but is still lexical; the sound fix is
+   to reject the VACUUM-INTO action at the SQLite tokenizer/authorizer level in
+   the SDK (the shell only has the raw SQL string). Until then, keep the lexical
+   guard. (Codex review P1, PR #1.)
