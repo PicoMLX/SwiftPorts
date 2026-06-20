@@ -78,6 +78,14 @@ public actor FileAuditSink: AuditSink {
 #else
         do {
             try ensureDirectory()
+            // The POSIX path rejects a non-regular log via O_NONBLOCK + fstat; this
+            // fallback (Windows/Android) has no such guard, and FileHandle(forWritingTo:)
+            // would block opening a pre-existing FIFO (waiting for a peer) — hanging
+            // preflight instead of failing closed. Reject a non-regular existing path
+            // first (Foundation lstat-equivalent, no open). (Codex review P2, PR #1.)
+            guard Sqlite3Executable.isRegularFileOrAbsent(url.path) else {
+                return "audit log unavailable (not a regular file)"
+            }
             if !FileManager.default.fileExists(atPath: url.path) {
                 FileManager.default.createFile(atPath: url.path, contents: nil)
             }

@@ -255,7 +255,7 @@ public enum Sqlite3Executable {
     private static func writeError(_ message: String,
                                    policy: SQLitePolicy,
                                    to stderr: OutputSink) {
-        guard policy.hardened, let rawCap = policy.maxResultBytes else {
+        guard let rawCap = policy.maxResultBytes else {
             stderr.write(message)
             return
         }
@@ -609,15 +609,17 @@ final class Session {
     private func out(_ s: String) { emit(s, toStderr: false) }
     private func err(_ s: String) { emit(s, toStderr: true) }
 
-    /// The central write path. In hardened mode it enforces the output-byte cap
-    /// across ALL data emitted — stdout (SQL result sets and data-bearing
+    /// The central write path. Whenever a result-byte cap is configured — the
+    /// hardened preset sets one, but an embedder may set `maxResultBytes` on any
+    /// policy — it enforces the cap across ALL data emitted: stdout (SQL result
+    /// sets and data-bearing
     /// dot-commands like `.dump`/`.schema`/`.print`, plus `.output` redirects)
     /// **and** stderr (errors, caret blocks) — counted against one shared
     /// budget, so a script can't exfiltrate unbounded bytes through either
     /// stream. This bounds *output* (what flows back to the caller), not the
     /// engine's per-statement materialization — a true row cap needs the SDK.
     private func emit(_ s: String, toStderr: Bool) {
-        guard policy.hardened, let cap = policy.maxResultBytes else {
+        guard let cap = policy.maxResultBytes else {
             rawWrite(s, toStderr: toStderr); return
         }
         if outputCapped { return }
@@ -627,7 +629,7 @@ final class Session {
             rawWrite(s, toStderr: toStderr)
         } else {
             rawWrite(Self.truncateToUTF8Bytes(s, limit: remaining), toStderr: toStderr)
-            rawWrite("\n-- output truncated: hardened policy output cap (\(cap) bytes) reached\n",
+            rawWrite("\n-- output truncated: output cap (\(cap) bytes) reached\n",
                      toStderr: toStderr)
             outputCapped = true
         }
@@ -738,6 +740,16 @@ final class Session {
     /// left to the host: installing a process-global signal handler from a
     /// library would be wrong.
     func runInteractive(stdin: InputSource) async {
+        // A configured statementTimeout can't bound a blocking `readLine()` — an
+        // untrusted argv could select `-interactive` and sit at the prompt forever,
+        // dodging the budget (the per-line check only runs *after* a line arrives).
+        // Refuse interactive mode when a timeout is set (the hardened preset sets
+        // one) rather than run unbounded. (Codex review P2, PR #1.)
+        if policy.statementTimeout != nil {
+            err("Error: interactive mode is not available under a timeout-bounded policy\n")
+            exitCode = 1
+            return
+        }
         out(Self.banner)
         var lineNo = 0
         var statementStart = 1

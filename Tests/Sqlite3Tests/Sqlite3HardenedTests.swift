@@ -102,6 +102,18 @@ import Testing
         #expect(!r.stdout.contains("500"))
     }
 
+    /// `maxResultBytes` is honored whenever set, not only under hardened — an
+    /// embedder can configure a cap-only policy. (Codex review P2, PR #1.)
+    @Test func outputCapAppliesWithoutHardened() async throws {
+        let policy = SQLitePolicy(hardened: false, maxResultBytes: 16)
+        let r = try await run(
+            [":memory:"],
+            policy: policy,
+            input: "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 500) SELECT x FROM c;\n")
+        #expect(r.stdout.contains("-- output truncated"))
+        #expect(!r.stdout.contains("500"))
+    }
+
     // MARK: Audit — attempted trail, written outside the DB
 
     /// With an embedder-set audit destination, each attempted statement is
@@ -467,14 +479,18 @@ import Testing
         #expect(r.exit == 1)
     }
 
-    /// Hardened enforcement (here SQLITE_LIMIT_ATTACHED=0) must also surface a
-    /// nonzero exit under -interactive — otherwise a policy-denied ATTACH in the
-    /// REPL looks successful to the caller. (Codex review P2, PR #1.)
-    @Test func hardenedInteractiveDeniedAttachSetsExit() async throws {
+    /// A configured statementTimeout can't bound a blocking readLine(), so
+    /// interactive mode is refused under a timeout-bounded policy (the hardened
+    /// preset sets one) rather than letting an untrusted argv sit at the prompt and
+    /// dodge the budget. (Codex review P2, PR #1.)
+    @Test func timeoutPolicyRefusesInteractiveMode() async throws {
         let r = try await run(["-interactive", ":memory:"],
                               policy: .hardened(),
-                              input: "ATTACH ':memory:' AS aux;\n")
+                              input: "SELECT 1;\n")
         #expect(r.exit == 1)
+        #expect(r.stderr.contains("interactive mode is not available"))
+        // The banner/prompt must not have run.
+        #expect(!r.stdout.contains("sqlite>"))
     }
 
     /// Under an audit policy, a non-literal ATTACH target (an expression
