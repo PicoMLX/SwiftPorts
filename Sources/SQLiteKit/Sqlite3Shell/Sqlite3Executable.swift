@@ -699,7 +699,7 @@ final class Session {
             for target in database.attachTargets(in: sql)
             where !target.isEmpty && target != ":memory:" {
                 do {
-                    try await Shell.authorize(Self.canonicalize(Shell.resolve(target)))
+                    try await Shell.authorize(Sqlite3Executable.canonicalize(Shell.resolve(target)))
                 } catch {
                     err("Error: \(error)\n")
                     exitCode = 1
