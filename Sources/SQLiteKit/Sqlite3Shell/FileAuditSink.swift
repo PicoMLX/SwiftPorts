@@ -46,7 +46,7 @@ public actor FileAuditSink: AuditSink {
     /// directory) on first write. Returns `nil` on success, or an error message.
     private func appendBytes(_ blob: Data) -> String? {
 #if canImport(Darwin) || canImport(Glibc)
-        let fd = openLogPOSIX()
+        let (fd, wasEmpty) = openLogPOSIX()
         guard fd >= 0 else { return String(cString: strerror(errno)) }
         defer { close(fd) }
         var failure: String?
@@ -66,6 +66,12 @@ public actor FileAuditSink: AuditSink {
             // subsequent SQL commit would lose. (Codex review P2, PR #1.)
             if failure == nil, fsync(fd) != 0 {
                 failure = String(cString: strerror(errno))
+            }
+            // When this run created the log, the content fsync above isn't enough:
+            // the new directory entry must be synced too or a crash could lose the
+            // file. (Codex review P2, PR #1.)
+            if failure == nil, wasEmpty {
+                failure = fsyncParentDirectory()
             }
         }
         return failure
@@ -110,7 +116,7 @@ public actor FileAuditSink: AuditSink {
     /// of blocking preflight indefinitely (the fstat below then rejects any FIFO
     /// that does open). O_NONBLOCK has no effect on writes to the regular file we
     /// require, so the append path is unchanged.
-    private func openLogPOSIX() -> Int32 {
+    private func openLogPOSIX() -> (fd: Int32, wasEmpty: Bool) {
         let path = url.path
         var fd = path.withCString {
             open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK, mode_t(0o600))
@@ -121,7 +127,7 @@ public actor FileAuditSink: AuditSink {
                 open($0, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK, mode_t(0o600))
             }
         }
-        guard fd >= 0 else { return fd }
+        guard fd >= 0 else { return (fd, false) }
         // O_NOFOLLOW rejects a leaf *symlink*, but an existing FIFO, device, or
         // socket at the path is still opened — writing the trail into one would
         // lose records (or block). Require a regular file; otherwise fail the
@@ -130,9 +136,30 @@ public actor FileAuditSink: AuditSink {
         if fstat(fd, &info) != 0 || (info.st_mode & mode_t(S_IFMT)) != mode_t(S_IFREG) {
             close(fd)
             errno = EINVAL
-            return -1
+            return (-1, false)
         }
-        return fd
+        // An empty file is either one this run just created (O_CREAT) or a
+        // leftover stub from a prior crash; either way its directory entry may not
+        // be durable yet, so the caller fsyncs the parent directory after writing.
+        return (fd, info.st_size == 0)
+    }
+
+    /// fsync the log's parent directory so a newly-created log's *directory entry*
+    /// is durable. The content `fsync(fd)` persists the inode, but on POSIX the
+    /// name→inode link isn't durable until the directory itself is synced — a
+    /// crash could otherwise lose the just-created file even after `record()`
+    /// returned true. Best-effort across filesystems: EINVAL / ENOTSUP mean the FS
+    /// doesn't support directory fsync (nothing to act on); any other errno is
+    /// reported so the record fails closed. (Codex review P2, PR #1.)
+    private func fsyncParentDirectory() -> String? {
+        let dir = url.deletingLastPathComponent().path
+        let dfd = dir.withCString { open($0, O_RDONLY | O_DIRECTORY) }
+        guard dfd >= 0 else { return String(cString: strerror(errno)) }
+        defer { close(dfd) }
+        if fsync(dfd) != 0 && errno != EINVAL && errno != ENOTSUP {
+            return String(cString: strerror(errno))
+        }
+        return nil
     }
 #endif
 }

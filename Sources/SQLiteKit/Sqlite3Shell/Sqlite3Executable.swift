@@ -453,6 +453,25 @@ final class Session {
             options: .regularExpression) != nil
     }
 
+    /// Whether `sql` contains an `ATTACH` statement whose database-filename target
+    /// is not a single string literal — `ATTACH '/a/' || 'b.db' AS x`, a function,
+    /// a parameter, or a number. `SQLiteDatabase.attachTargets(in:)` only captures
+    /// literal filenames, so an expression target would slip past the audit-sidecar
+    /// reservation in `runStatement` and let SQLite create/delete the audit log's
+    /// -journal/-wal sidecar; with an audit trail active we refuse it. Built on
+    /// `strippedForGuards`, which collapses every string literal / quoted
+    /// identifier / comment to one space — so a literal target leaves only
+    /// whitespace between ATTACH (and the optional DATABASE keyword) and the AS
+    /// clause, while any expression leaves an operator or other token there. The
+    /// `(?!as\b)\S` matches that first non-whitespace token when it isn't `AS`.
+    /// Lexical, like the VACUUM-INTO guard; a fully sound check needs the SDK
+    /// tokenizer. (Codex review P2, PR #1.)
+    static func attachHasNonLiteralTarget(_ sql: String) -> Bool {
+        strippedForGuards(sql).range(
+            of: #"(?i)(?:^|;)\s*attach\b\s*(?:database\b\s*)?(?!as\b)\S"#,
+            options: .regularExpression) != nil
+    }
+
     /// Bound a single audited record's size so an oversized untrusted statement
     /// can't bloat the out-of-DB JSONL trail. (SQLITE_LIMIT_SQL_LENGTH also caps
     /// the SQL, but only at prepare time — after this record is written.)
@@ -720,6 +739,20 @@ final class Session {
         // SQLITE_LIMIT_ATTACHED=0, so this canonicalize+authorize only matters
         // on the permissive path.)
         if !safeMode, sql.range(of: "attach", options: .caseInsensitive) != nil {
+            // A non-literal ATTACH filename — `ATTACH '/d/' || 'x.db' AS a`, a
+            // function, parameter, or number — isn't returned by attachTargets, so
+            // it would slip past the audit-sidecar reservation below and let SQLite
+            // create/delete the audit log's -journal/-wal sidecar. attachTargets
+            // only sees literal filenames; with an audit trail active, refuse the
+            // expression form rather than open a path the gate never resolved.
+            // (hardened / forceReadOnly already block *all* ATTACH via
+            // SQLITE_LIMIT_ATTACHED=0, so this closes the audit-only gap.)
+            // (Codex review P2, PR #1.)
+            if auditCanonicalPath != nil, Self.attachHasNonLiteralTarget(sql) {
+                err("Error: cannot ATTACH a computed (non-literal) database filename while an audit trail is active\n")
+                exitCode = 1
+                return false
+            }
             for target in database.attachTargets(in: sql)
             where !target.isEmpty && target != ":memory:" {
                 let resolved = Sqlite3Executable.canonicalize(Shell.resolve(target))
@@ -789,12 +822,15 @@ final class Session {
             exitCode = error.code
         case .interactive:
             // The REPL keeps going on error and omits the line number that script
-            // context carries. But the read-only policy must not be silently
-            // escapable by selecting -interactive: surface a nonzero exit for an
-            // error under that policy (e.g. a blocked write), even though the plain
-            // REPL leaves exit unset. (Codex review P2, PR #1.)
+            // context carries. But a security policy must not be silently
+            // escapable by selecting -interactive: under hardened *or* read-only,
+            // a policy denial — a blocked write under read-only, or an ATTACH /
+            // oversized statement refused by hardened's SQLITE_LIMIT_* — must still
+            // surface a nonzero exit, so a policy-denied run can't look successful
+            // to the caller. The plain (permissive) REPL still leaves exit unset.
+            // (Codex review P2, PR #1.)
             header = (error.phase == .prepare ? "Parse error: " : "Runtime error: ")
-            if policy.forceReadOnly { exitCode = 1 }
+            if policy.forceReadOnly || policy.hardened { exitCode = 1 }
         }
         var message = error.message
         if error.phase == .step { message += " (\(error.code))" }

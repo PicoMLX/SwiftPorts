@@ -466,4 +466,72 @@ import Testing
                               input: "CREATE TABLE t(x);\n")
         #expect(r.exit == 1)
     }
+
+    /// Hardened enforcement (here SQLITE_LIMIT_ATTACHED=0) must also surface a
+    /// nonzero exit under -interactive — otherwise a policy-denied ATTACH in the
+    /// REPL looks successful to the caller. (Codex review P2, PR #1.)
+    @Test func hardenedInteractiveDeniedAttachSetsExit() async throws {
+        let r = try await run(["-interactive", ":memory:"],
+                              policy: .hardened(),
+                              input: "ATTACH ':memory:' AS aux;\n")
+        #expect(r.exit == 1)
+    }
+
+    /// Under an audit policy, a non-literal ATTACH target (an expression
+    /// attachTargets can't capture) must be refused — it would otherwise open a
+    /// path the audit-sidecar gate never saw, letting SQLite touch the audit log's
+    /// -journal/-wal sidecar. (Codex review P2, PR #1.)
+    @Test func auditRejectsNonLiteralAttachTarget() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-attach-expr-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auditURL = dir.appendingPathComponent("trail.jsonl")
+        let policy = SQLitePolicy(hardened: false, auditURL: auditURL)
+        let r = try await run([":memory:"], policy: policy,
+                              input: "ATTACH '\(dir.path)/' || 'aux.db' AS aux;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("non-literal"))
+        // The expression target must not have been opened (no sidecar created).
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("aux.db").path))
+    }
+
+    /// The non-literal ATTACH guard must not be a false positive: a plain literal
+    /// target is still gated/recorded and allowed under audit. (Codex review P2.)
+    @Test func auditAllowsLiteralAttachTarget() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-attach-lit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auditURL = dir.appendingPathComponent("trail.jsonl")
+        let attached = dir.appendingPathComponent("aux.db")
+        let policy = SQLitePolicy(hardened: false, auditURL: auditURL)
+        let r = try await run([":memory:"], policy: policy,
+                              input: "ATTACH '\(attached.path)' AS aux;\nCREATE TABLE aux.t(x);\n")
+        #expect(r.exit == 0)
+        // The audit log was created and recorded the attempts (exercises the
+        // first-create fsync + parent-directory fsync path).
+        let trail = try? String(contentsOf: auditURL, encoding: .utf8)
+        #expect(trail?.isEmpty == false)
+    }
+
+    /// Unit-cover the lexical ATTACH-target guard directly (the async tests above
+    /// exercise the policy wiring; this pins the literal-vs-expression edges).
+    @Test func attachNonLiteralTargetDetection() {
+        // Literal targets — must NOT be flagged.
+        #expect(!Session.attachHasNonLiteralTarget("ATTACH 'a.db' AS x"))
+        #expect(!Session.attachHasNonLiteralTarget("ATTACH DATABASE 'a.db' AS x"))
+        #expect(!Session.attachHasNonLiteralTarget("attach   'a.db'   as x"))
+        #expect(!Session.attachHasNonLiteralTarget("attach'a.db'as x"))            // no spaces
+        #expect(!Session.attachHasNonLiteralTarget("SELECT 'attach foo'; ATTACH 'a.db' AS x"))
+        #expect(!Session.attachHasNonLiteralTarget("SELECT 1 -- attach 'x'||'y'\n"))
+        #expect(!Session.attachHasNonLiteralTarget("SELECT 1"))                    // no ATTACH
+        // Expression / non-literal targets — MUST be flagged.
+        #expect(Session.attachHasNonLiteralTarget("ATTACH '/d/' || 'x.db' AS a"))
+        #expect(Session.attachHasNonLiteralTarget("ATTACH DATABASE '/d/'||'x.db' AS a"))
+        #expect(Session.attachHasNonLiteralTarget("ATTACH ? AS a"))
+        #expect(Session.attachHasNonLiteralTarget("ATTACH printf('%s','x.db') AS a"))
+        // Mixed: first literal, second expression — flagged on the second.
+        #expect(Session.attachHasNonLiteralTarget("ATTACH 'ok.db' AS a; ATTACH 'x'||'y' AS b"))
+    }
 }
