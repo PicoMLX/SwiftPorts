@@ -3,8 +3,6 @@ import Foundation
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
-#elseif canImport(Android)
-import Android
 #endif
 
 /// An `AuditSink` that appends one JSON object per event (JSON Lines) to a host
@@ -47,7 +45,7 @@ public actor FileAuditSink: AuditSink {
     /// Atomically append `blob` to the log, creating the file (and parent
     /// directory) on first write. Returns `nil` on success, or an error message.
     private func appendBytes(_ blob: Data) -> String? {
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android)
+#if canImport(Darwin) || canImport(Glibc)
         let (fd, wasEmpty) = openLogPOSIX()
         guard fd >= 0 else { return String(cString: strerror(errno)) }
         defer { close(fd) }
@@ -108,7 +106,7 @@ public actor FileAuditSink: AuditSink {
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     }
 
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android)
+#if canImport(Darwin) || canImport(Glibc)
     /// Open the log for an atomic append. Try the open first and create the
     /// parent directory only on ENOENT, so the common (directory-exists) path
     /// is a single syscall rather than a `createDirectory` on every record.

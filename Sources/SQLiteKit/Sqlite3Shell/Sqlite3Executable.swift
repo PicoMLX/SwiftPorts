@@ -212,7 +212,7 @@ public enum Sqlite3Executable {
     /// (Windows) there's no POSIX inode, so we fall back to that Foundation
     /// file id, which is the best identity check available there.)
     static func sameFile(_ a: String, _ b: String) -> Bool {
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android)
+#if canImport(Darwin) || canImport(Glibc)
         var sa = stat(), sb = stat()
         guard a.withCString({ stat($0, &sa) }) == 0,
               b.withCString({ stat($0, &sb) }) == 0 else { return false }
@@ -279,18 +279,23 @@ public enum Sqlite3Executable {
     /// `lstat` (not `stat`) so a symlink swapped onto the canonical leaf after
     /// authorization is rejected rather than followed. (Codex review P2, PR #1.)
     static func isRegularFileOrAbsent(_ path: String) -> Bool {
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android)
+#if canImport(Darwin) || canImport(Glibc)
         var info = stat()
         let rc = path.withCString { lstat($0, &info) }
         if rc != 0 { return errno == ENOENT }   // absent → fine (will be created)
         return (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
 #else
-        // Non-POSIX best-effort: reject an existing directory; FIFO/device/socket
-        // are POSIX concepts not distinguishable here.
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+        // Non-POSIX path — Windows, and Android (whose Bionic libc isn't importable
+        // as a POSIX module: `errno` is a macro and stat/lstat aren't in scope). Use
+        // Foundation's symlink-aware attribute lookup instead: allow only an absent
+        // path or a regular file, rejecting directories, sockets, devices, and FIFOs
+        // (reported as typeUnknown), so a FIFO/device target can't block the open
+        // before the session timeout exists. attributesOfItem throws for an absent
+        // path → treated as will-be-created. (Codex review P2, PR #1.)
+        guard let type = (try? FileManager.default.attributesOfItem(atPath: path))?[.type]
+                as? FileAttributeType
         else { return true }
-        return !isDir.boolValue
+        return type == .typeRegular
 #endif
     }
 
