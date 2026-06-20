@@ -396,4 +396,74 @@ import Testing
         #expect(r.exit == 1)
         #expect(!r.stdout.contains("ranaway"))
     }
+
+    /// The bail check must isolate each command's failure: a prior (non-bail)
+    /// error that already set exitCode=1 must not mask a later denied dot-command
+    /// once `.bail on` is active. (Codex review P2, PR #1.)
+    @Test func bailStopsAfterPriorErrorThenDeniedDotCommand() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-bail2-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auditURL = dir.appendingPathComponent("trail.jsonl")
+        let policy = SQLitePolicy(hardened: false, auditURL: auditURL)
+        // A failing statement sets exitCode=1 (bail off -> continues); then .bail
+        // on, then a denied .output at the audit log. The accumulated exitCode must
+        // not hide this command's failure — the trailing SELECT must NOT run.
+        let r = try await run(
+            [":memory:"], policy: policy,
+            input: "SELECT * FROM no_such_table;\n.bail on\n.output \(auditURL.path)\nSELECT 'ranaway';\n")
+        #expect(r.exit == 1)
+        #expect(!r.stdout.contains("ranaway"))
+    }
+
+    /// Under forceReadOnly, a denied `.open` (here a missing file opened
+    /// read-only) must report a nonzero exit, not silently succeed.
+    /// (Codex review P2, PR #1.)
+    @Test func readOnlyOpenOfMissingFileSetsExit() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-open-ro-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let missing = dir.appendingPathComponent("nope.db")
+        let r = try await run([":memory:"],
+                              policy: SQLitePolicy(hardened: false, forceReadOnly: true),
+                              input: ".open \(missing.path)\n")
+        #expect(r.exit == 1)
+    }
+
+    /// Under forceReadOnly, an output redirect must not target the open database
+    /// file — `finishOutput` would overwrite it outside SQLite. (Codex review P2.)
+    @Test func readOnlyRejectsOutputRedirectToOpenDatabase() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-out-db-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbPath = dir.appendingPathComponent("data.db")
+        // Create a real database file so it can be opened read-only.
+        _ = try await run([dbPath.path], input: "CREATE TABLE t(x);\n")
+        let r = try await run([dbPath.path],
+                              policy: SQLitePolicy(hardened: false, forceReadOnly: true),
+                              input: ".output \(dbPath.path)\n.print pwned\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("open database"))
+        // The database file must not have been overwritten with the redirect text.
+        let bytes = try Data(contentsOf: dbPath)
+        #expect(!String(decoding: bytes, as: UTF8.self).contains("pwned"))
+    }
+
+    /// A read-only policy must not be escapable by selecting -interactive: a
+    /// blocked write in the REPL must still yield a nonzero exit. (Codex review P2.)
+    @Test func readOnlyInteractiveWriteSetsExit() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-int-ro-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbPath = dir.appendingPathComponent("ro.db")
+        _ = try await run([dbPath.path], input: "CREATE TABLE seed(x);\n")
+        let r = try await run(["-interactive", dbPath.path],
+                              policy: SQLitePolicy(hardened: false, forceReadOnly: true),
+                              input: "CREATE TABLE t(x);\n")
+        #expect(r.exit == 1)
+    }
 }

@@ -568,13 +568,17 @@ final class Session {
                 // check, so a fail-closed audit blocks the echo too.
                 // sqlite3 reports a command-line argument as "line 0".
                 safeLine = context == .inline ? 0 : lineNo
-                let exitCodeBefore = exitCode
+                // Detect *this* command's failure in isolation: zero exitCode across
+                // the call so a denial is caught even when a prior (non-bail) error
+                // already set it, then restore the prior code. A failed dot-command
+                // must halt when bail/inline says stop-on-error, matching the
+                // statement path below. (Codex review P2, PR #1.)
+                let priorExit = exitCode
+                exitCode = 0
                 await handleDot(trimmed)
-                // A failed dot-command (policy denial, missing file, …) must halt
-                // when bail/inline says stop-on-error — matching the statement
-                // path below — rather than letting later statements run. handleDot
-                // reports failure by setting exitCode. (Codex review P2, PR #1.)
-                if exitCode != exitCodeBefore, stopsOnError() { return false }
+                let dotFailed = exitCode != 0
+                if priorExit != 0 { exitCode = priorExit }
+                if dotFailed, stopsOnError() { return false }
                 continue
             }
             if buffer.isEmpty { statementStart = lineNo }
@@ -700,12 +704,14 @@ final class Session {
             return false
         }
         if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
-        if eqp { renderQueryPlan(sql) }
-        // Re-pin temp_store=MEMORY before each statement so temp confinement
-        // holds across statement boundaries even if an earlier statement set
-        // FILE; fail closed if it can't be applied (see helper). (The within-chunk
-        // case is covered by the SDK compile flag SQLITE_TEMP_STORE=3.)
+        // Re-pin temp_store=MEMORY before ANY DB-backed work this statement —
+        // including EXPLAIN QUERY PLAN rendering, which evaluate()s the query — so
+        // temp confinement holds across statement boundaries even if an earlier
+        // statement set FILE; fail closed if it can't be applied (see helper). The
+        // within-chunk case is covered by the SDK compile flag SQLITE_TEMP_STORE=3.
+        // (Re-pin precedes EQP per Codex review P2, PR #1.)
         if !repinTempStoreOrFailClosed() { return false }
+        if eqp { renderQueryPlan(sql) }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
         // `.open` take. (`-safe` blocks ATTACH outright via its authorizer,
@@ -782,9 +788,13 @@ final class Session {
             header = error.phase == .prepare ? "Error: in prepare, " : "Error: stepping, "
             exitCode = error.code
         case .interactive:
-            // The REPL keeps going on error (no exit code) and omits the
-            // line number that script context carries.
+            // The REPL keeps going on error and omits the line number that script
+            // context carries. But the read-only policy must not be silently
+            // escapable by selecting -interactive: surface a nonzero exit for an
+            // error under that policy (e.g. a blocked write), even though the plain
+            // REPL leaves exit unset. (Codex review P2, PR #1.)
             header = (error.phase == .prepare ? "Parse error: " : "Runtime error: ")
+            if policy.forceReadOnly { exitCode = 1 }
         }
         var message = error.message
         if error.phase == .step { message += " (\(error.code))" }
@@ -1103,6 +1113,7 @@ final class Session {
             finishOutput()
             if let path = args.first {
                 guard let url = await resolveAuthorized(path) else { return }
+                if redirectHitsOpenDatabase(url) { return }
                 redirect = Redirect(url: url, buffer: "", once: false)
             }
 
@@ -1113,6 +1124,7 @@ final class Session {
             }
             finishOutput()
             guard let url = await resolveAuthorized(path) else { return }
+            if redirectHitsOpenDatabase(url) { return }
             redirect = Redirect(url: url, buffer: "", once: true)
 
         case ".import":
@@ -1274,9 +1286,14 @@ final class Session {
                 applyHardening(to: database)
                 filename = path   // as-typed, matching sqlite3's `.show`
             } catch let error as SQLiteError {
+                // A denied open (e.g. the read-only policy rejecting a missing or
+                // unwritable target) must report failure, like the other read-only
+                // dot-command denials. (Codex review P2, PR #1.)
                 err("Error: \(error.message)\n")
+                exitCode = 1
             } catch {
                 err("Error: \(error)\n")
+                exitCode = 1
             }
 
         case ".read":
@@ -1340,6 +1357,24 @@ final class Session {
             return nil
         }
         return url
+    }
+
+    /// Under a read-only policy, an output redirect (`.output`/`.once`) must not
+    /// target the open database file or its -wal/-shm/-journal sidecars:
+    /// `finishOutput` would overwrite the database outside SQLite, defeating the
+    /// trusted read-only guarantee. Returns true (after reporting) when denied.
+    /// (Codex review P2, PR #1.)
+    private func redirectHitsOpenDatabase(_ url: URL) -> Bool {
+        guard policy.forceReadOnly, filename != ":memory:", !filename.isEmpty else {
+            return false
+        }
+        let openDB = Sqlite3Executable.canonicalize(Shell.resolve(filename)).path
+        guard Sqlite3Executable.auditCollidesWithDatabase(auditPath: url.path, dbPath: openDB) else {
+            return false
+        }
+        err("Error: cannot redirect output to the open database (or its -wal/-shm/-journal sidecar) under the read-only policy\n")
+        exitCode = 1
+        return true
     }
 
     /// Re-pin temp_store=MEMORY (hardened only), failing closed if it can't be

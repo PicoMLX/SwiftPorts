@@ -60,6 +60,13 @@ public actor FileAuditSink: AuditSink {
                     written += n
                 }
             }
+            // Durability: record()'s contract only permits the action once the
+            // event is on disk, so flush before returning success — a bare write(2)
+            // leaves the JSONL in the page cache, which a crash after the
+            // subsequent SQL commit would lose. (Codex review P2, PR #1.)
+            if failure == nil, fsync(fd) != 0 {
+                failure = String(cString: strerror(errno))
+            }
         }
         return failure
 #else
@@ -73,6 +80,7 @@ public actor FileAuditSink: AuditSink {
             if !blob.isEmpty {
                 try handle.seekToEnd()
                 try handle.write(contentsOf: blob)
+                try handle.synchronize()   // flush before success (Codex review P2, PR #1)
             }
             return nil
         } catch {
