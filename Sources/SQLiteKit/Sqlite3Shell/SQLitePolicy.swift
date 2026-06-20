@@ -88,7 +88,7 @@ public struct SQLitePolicy: Sendable {
         p.hardened = true
         p.maxResultBytes = p.maxResultBytes ?? 8 * 1024 * 1024
         p.statementTimeout = p.statementTimeout ?? 30
-        p.maxInputBytes = p.maxInputBytes ?? defaultInputByteCeiling
+        p.maxInputBytes = p.maxInputBytes ?? Self.defaultInputByteCeiling
         return p
     }
 
