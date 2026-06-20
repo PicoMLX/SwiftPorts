@@ -526,10 +526,14 @@ import Testing
         #expect(!Session.attachHasNonLiteralTarget("SELECT 'attach foo'; ATTACH 'a.db' AS x"))
         #expect(!Session.attachHasNonLiteralTarget("SELECT 1 -- attach 'x'||'y'\n"))
         #expect(!Session.attachHasNonLiteralTarget("SELECT 1"))                    // no ATTACH
+        #expect(!Session.attachHasNonLiteralTarget("ATTACH DATABASE 'a.db' AS database")) // schema named "database"
+        #expect(!Session.attachHasNonLiteralTarget("  /* c */ ATTACH 'a.db' AS x"))       // leading comment
         // Expression / non-literal targets — MUST be flagged.
         #expect(Session.attachHasNonLiteralTarget("ATTACH '/d/' || 'x.db' AS a"))
         #expect(Session.attachHasNonLiteralTarget("ATTACH DATABASE '/d/'||'x.db' AS a"))
         #expect(Session.attachHasNonLiteralTarget("ATTACH ? AS a"))
+        #expect(Session.attachHasNonLiteralTarget("ATTACH DATABASE ? AS a"))
+        #expect(Session.attachHasNonLiteralTarget("ATTACH 123 AS a"))             // numeric expr
         #expect(Session.attachHasNonLiteralTarget("ATTACH printf('%s','x.db') AS a"))
         // Mixed: first literal, second expression — flagged on the second.
         #expect(Session.attachHasNonLiteralTarget("ATTACH 'ok.db' AS a; ATTACH 'x'||'y' AS b"))

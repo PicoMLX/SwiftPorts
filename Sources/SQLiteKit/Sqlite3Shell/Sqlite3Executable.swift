@@ -464,11 +464,15 @@ final class Session {
     /// whitespace between ATTACH (and the optional DATABASE keyword) and the AS
     /// clause, while any expression leaves an operator or other token there. The
     /// `(?!as\b)\S` matches that first non-whitespace token when it isn't `AS`.
-    /// Lexical, like the VACUUM-INTO guard; a fully sound check needs the SDK
-    /// tokenizer. (Codex review P2, PR #1.)
+    /// The optional DATABASE keyword needs an alternation rather than a plain
+    /// `(?:database\b\s*)?` — an optional group backtracks (gives DATABASE back so
+    /// `\S` matches its `D`) and wrongly flags the literal `ATTACH DATABASE 'x' AS
+    /// y`. So either DATABASE is present and followed by a non-AS token, or the
+    /// first token isn't DATABASE/AS. Lexical, like the VACUUM-INTO guard; a fully
+    /// sound check needs the SDK tokenizer. (Codex review P2, PR #1.)
     static func attachHasNonLiteralTarget(_ sql: String) -> Bool {
         strippedForGuards(sql).range(
-            of: #"(?i)(?:^|;)\s*attach\b\s*(?:database\b\s*)?(?!as\b)\S"#,
+            of: #"(?i)(?:^|;)\s*attach\b\s*(?:database\b\s*(?!as\b)\S|(?!database\b)(?!as\b)\S)"#,
             options: .regularExpression) != nil
     }
 
