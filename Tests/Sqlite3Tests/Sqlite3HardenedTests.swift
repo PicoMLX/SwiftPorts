@@ -766,4 +766,83 @@ import Testing
         #expect(r.exit == 1)
         #expect(r.stderr.contains("URI"))
     }
+
+    // MARK: Inline `-cmd` fail-closed (Codex review P2, PR #1)
+
+    /// Under an active policy, a denied `-cmd` must fail the run closed: the
+    /// trailing SQL argument must not execute as if setup had succeeded. VACUUM
+    /// INTO is refused under the hardened policy, so the later SELECT must not run.
+    @Test func inlineCommandDenialFailsRunClosed() async throws {
+        let r = try await run(["-cmd", "VACUUM INTO 'side.db';", ":memory:", "SELECT 'ran';"],
+                              policy: .hardened())
+        #expect(r.exit == 1)
+        #expect(!r.stdout.contains("ran"))
+    }
+
+    /// The permissive policy keeps stock sqlite3 behavior: a `-cmd` error is
+    /// reported but non-fatal, so the trailing SQL still runs.
+    @Test func permissiveInlineErrorStillRunsTrailingSql() async throws {
+        let r = try await run(["-cmd", "SELECT * FROM nope;", ":memory:", "SELECT 'ran';"])
+        #expect(r.stdout.contains("ran"))
+    }
+
+    /// `-bail` makes a `-cmd` error fatal even under the permissive policy, so the
+    /// trailing SQL must not run.
+    @Test func bailInlineErrorHaltsBeforeTrailingSql() async throws {
+        let r = try await run(["-bail", "-cmd", "SELECT * FROM nope;", ":memory:", "SELECT 'ran';"])
+        #expect(r.exit != 0)
+        #expect(!r.stdout.contains("ran"))
+    }
+
+    // MARK: Timeout-bounded backup/restore (Codex review P2, PR #1)
+
+    /// A synchronous `.backup` / `.restore` copy can't honor the script budget, so
+    /// both are refused under a timeout-bounded policy.
+    @Test func timeoutPolicyRefusesBackupAndRestore() async throws {
+        let policy = SQLitePolicy(statementTimeout: 30)
+        let rb = try await run([":memory:"], policy: policy, input: ".backup out.db\n")
+        #expect(rb.exit == 1)
+        #expect(rb.stderr.contains("timeout-bounded"))
+        let rr = try await run([":memory:"], policy: policy, input: ".restore in.db\n")
+        #expect(rr.exit == 1)
+        #expect(rr.stderr.contains("timeout-bounded"))
+    }
+
+    // MARK: Bounded whole-file reads (Codex review P2, PR #1)
+
+    /// `.read` / `.import` slurp the whole file before any budget applies, so under
+    /// a bounding policy a file over `maxInputBytes` is refused up front. A tiny
+    /// cap keeps the fixture small.
+    @Test func boundingPolicyRefusesOversizedFileRead() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-input-cap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let policy = SQLitePolicy(hardened: true, maxInputBytes: 1024)
+
+        let script = dir.appendingPathComponent("big.sql")
+        try String(repeating: "-- pad\n", count: 1024).write(to: script, atomically: true, encoding: .utf8)
+        let rr = try await run([":memory:"], policy: policy, input: ".read \(script.path)\n")
+        #expect(rr.exit == 1)
+        #expect(rr.stderr.contains("larger than"))
+
+        let csv = dir.appendingPathComponent("big.csv")
+        try String(repeating: "a,b\n", count: 1024).write(to: csv, atomically: true, encoding: .utf8)
+        let ri = try await run([":memory:"], policy: policy,
+            input: ".mode csv\nCREATE TABLE t(a,b);\n.import \(csv.path) t\n")
+        #expect(ri.stderr.contains("larger than"))
+    }
+
+    /// A small file under the cap still reads normally under the same policy.
+    @Test func boundingPolicyAllowsSmallFileRead() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-input-ok-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("small.sql")
+        try "SELECT 'ran';\n".write(to: script, atomically: true, encoding: .utf8)
+        let policy = SQLitePolicy(hardened: true, maxInputBytes: 1024)
+        let r = try await run([":memory:"], policy: policy, input: ".read \(script.path)\n")
+        #expect(r.stdout.contains("ran"))
+    }
 }

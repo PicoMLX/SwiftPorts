@@ -35,6 +35,16 @@ public struct SQLitePolicy: Sendable {
     /// SDK progress handler + `sqlite3_interrupt`.
     public var statementTimeout: TimeInterval?
 
+    /// Overrides the ceiling on the size of a file that `.read` / `-init` /
+    /// `.import` will load whole (via `String(contentsOf:)`) under a bounding
+    /// policy (hardened / read-only / timeout). `nil` falls back to
+    /// `defaultInputByteCeiling`. Has no effect under the permissive policy,
+    /// which reads files unbounded like stock sqlite3. The slurp happens before
+    /// `statementTimeout`, `SQLITE_LIMIT_SQL_LENGTH`, or `maxResultBytes` can
+    /// apply, so without this an authorized multi-GB regular file could exhaust
+    /// memory in a sandboxed run regardless of the budget.
+    public var maxInputBytes: Int?
+
     /// Force read-only opens regardless of argv. Off by default so hardened
     /// mode does not block legitimate writes (incl. vec0/FTS5 index builds).
     public var forceReadOnly: Bool
@@ -47,11 +57,13 @@ public struct SQLitePolicy: Sendable {
                 maxResultBytes: Int? = nil,
                 statementTimeout: TimeInterval? = nil,
                 forceReadOnly: Bool = false,
+                maxInputBytes: Int? = nil,
                 auditURL: URL? = nil) {
         self.hardened = hardened
         self.maxResultBytes = maxResultBytes
         self.statementTimeout = statementTimeout
         self.forceReadOnly = forceReadOnly
+        self.maxInputBytes = maxInputBytes
         self.auditURL = auditURL
     }
 
@@ -64,6 +76,7 @@ public struct SQLitePolicy: Sendable {
                      maxResultBytes: 8 * 1024 * 1024,   // 8 MiB of output
                      statementTimeout: 30,
                      forceReadOnly: false,
+                     maxInputBytes: defaultInputByteCeiling,
                      auditURL: auditURL)
     }
 
@@ -75,6 +88,7 @@ public struct SQLitePolicy: Sendable {
         p.hardened = true
         p.maxResultBytes = p.maxResultBytes ?? 8 * 1024 * 1024
         p.statementTimeout = p.statementTimeout ?? 30
+        p.maxInputBytes = p.maxInputBytes ?? defaultInputByteCeiling
         return p
     }
 
@@ -87,4 +101,10 @@ public struct SQLitePolicy: Sendable {
     /// Ceilings applied in hardened mode (and enforced against `.limit` raises).
     static let lengthCeiling: Int32 = 1_000_000_000
     static let sqlLengthCeiling: Int32 = 1_000_000
+
+    /// Default ceiling for a whole-file `.read` / `-init` / `.import` slurp under
+    /// a bounding policy when `maxInputBytes` is unset: generous enough for real
+    /// setup scripts and CSV imports, bounded enough that an authorized multi-GB
+    /// file can't exhaust memory in a sandboxed run. (Codex review P2, PR #1.)
+    static let defaultInputByteCeiling = 64 * 1024 * 1024   // 64 MiB
 }

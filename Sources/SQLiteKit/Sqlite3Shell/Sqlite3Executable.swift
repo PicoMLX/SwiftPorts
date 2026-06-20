@@ -166,8 +166,23 @@ public enum Sqlite3Executable {
         if let initFile = options.initFile {
             await session.runScript(path: initFile)
         }
+        // `-cmd` arguments are command-line SQL: each bails on its first
+        // error/denial (`process` returns false under `.inline`). Under any active
+        // policy — or with `-bail` — a failed or policy-denied setup command must
+        // fail the whole run closed: not just stop the rest of the -cmd list but
+        // also skip the trailing SQL argument and the stdin loop below, so e.g. a
+        // denied `-cmd "VACUUM INTO …"` can't be followed by a later statement
+        // running as if setup had succeeded. Arm shutdown so the `!shouldQuit`
+        // guards below skip both (just breaking this loop wouldn't). The permissive
+        // policy keeps stock sqlite3's continue-on-error (a `-cmd` error there is
+        // reported but non-fatal unless `-bail`). (Codex review P2, PR #1.)
+        let failClosedOnInlineError = policy.hardened || policy.forceReadOnly
+            || policy.statementTimeout != nil || policy.auditURL != nil || options.bail
         for command in options.commands where !session.shouldQuit {
-            _ = await session.process(command, context: .inline)
+            if await session.process(command, context: .inline) == false, failClosedOnInlineError {
+                session.requestStop()
+                break
+            }
         }
 
         // A trailing SQL argument runs and exits; otherwise read stdin.
@@ -310,6 +325,25 @@ public enum Sqlite3Executable {
                 as? FileAttributeType
         else { return true }
         return type == .typeRegular
+#endif
+    }
+
+    /// The size in bytes of `path` if it is a regular file, else nil (absent, or
+    /// a non-regular file — which the file-read guard already refuses separately).
+    /// `lstat`, not `stat`, so a symlink swapped onto the canonical leaf after
+    /// authorization isn't followed — mirrors `isRegularFileOrAbsent`. Returns
+    /// `Int64` so a >2 GB size doesn't overflow `Int` on 32-bit. (Codex review
+    /// P2, PR #1.)
+    static func regularFileSize(_ path: String) -> Int64? {
+#if canImport(Darwin) || canImport(Glibc)
+        var info = stat()
+        guard path.withCString({ lstat($0, &info) }) == 0,
+              (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else { return nil }
+        return Int64(info.st_size)
+#else
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              (attrs[.type] as? FileAttributeType) == .typeRegular else { return nil }
+        return (attrs[.size] as? NSNumber)?.int64Value
 #endif
     }
 
@@ -467,6 +501,14 @@ final class Session {
         shouldQuit = true
         return true
     }
+
+    /// Arm a full-run shutdown after a fatal inline failure (a failed or
+    /// policy-denied `-cmd`), so the trailing SQL argument and the stdin loop in
+    /// `run` are skipped via their `!shouldQuit` guards — the cross-argument
+    /// counterpart of the trailing-SQL loop's stop-on-error. The caller decides
+    /// when a `false` from `process` is fatal (only under an active policy or
+    /// `-bail`), so this just arms the flag. (Codex review P2, PR #1.)
+    func requestStop() { shouldQuit = true }
 
     /// Truncate `s` to at most `limit` UTF-8 bytes at a line boundary, so a
     /// capped CSV/JSON render is cut between rows rather than mid-character.
@@ -1338,7 +1380,7 @@ final class Session {
                 err("Error: .import expects FILE and TABLE\n")
                 return
             }
-            guard let url = await resolveAuthorized(args[0]) else { return }
+            guard let url = await resolveAuthorized(args[0], boundedRead: true) else { return }
             let text: String
             do {
                 text = try String(contentsOf: url, encoding: .utf8)
@@ -1355,6 +1397,18 @@ final class Session {
             // opened read-only and still receive the backup).
             if policy.forceReadOnly {
                 err("Error: .backup is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
+            // A synchronous full-database copy can't honor the script budget:
+            // `database.backup(to:)` returns only once the whole copy is done, so
+            // under a timeout-bounded policy a large authorized DB would keep
+            // copying past the deadline (the between-statements check never gets a
+            // turn). Refuse it — like interactive mode — rather than run unbounded;
+            // a deadline-checked incremental copy would need the SDK's step-wise
+            // backup API. (Codex review P2, PR #1.)
+            if policy.statementTimeout != nil {
+                err("Error: .backup is not available under a timeout-bounded policy\n")
                 exitCode = 1
                 return
             }
@@ -1381,6 +1435,15 @@ final class Session {
             // "readonly database" error.
             if policy.forceReadOnly {
                 err("Error: .restore is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
+            // Same budget gap as `.backup`: the synchronous copy into the main DB
+            // can't be interrupted by statementTimeout, so refuse `.restore` under
+            // a timeout-bounded policy rather than copy a large source unbounded.
+            // (Codex review P2, PR #1.)
+            if policy.statementTimeout != nil {
+                err("Error: .restore is not available under a timeout-bounded policy\n")
                 exitCode = 1
                 return
             }
@@ -1520,7 +1583,7 @@ final class Session {
     /// Reads a SQL/dot-command script through ShellKit's sandbox gate and
     /// runs it.
     func runScript(path: String) async {
-        guard let url = await resolveAuthorized(path) else { exitCode = 1; return }
+        guard let url = await resolveAuthorized(path, boundedRead: true) else { exitCode = 1; return }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
             _ = await process(text, context: .script)
@@ -1532,7 +1595,7 @@ final class Session {
 
     /// Converts a user-supplied path to a sandbox URL and asks the host to
     /// authorize it. Returns `nil` (after reporting) if denied.
-    private func resolveAuthorized(_ path: String) async -> URL? {
+    private func resolveAuthorized(_ path: String, boundedRead: Bool = false) async -> URL? {
         // Canonicalize before authorizing so the authorized path is the same
         // symlink-resolved string the file op then uses (see canonicalize()).
         let url = Sqlite3Executable.canonicalize(Shell.resolve(path))
@@ -1566,6 +1629,21 @@ final class Session {
             err("Error: cannot direct a command at a non-regular file under this policy\n")
             exitCode = 1
             return nil
+        }
+        // A whole-file slurp — `.read`/`-init` (runScript) and `.import` load the
+        // file entirely via `String(contentsOf:)` — happens before statementTimeout,
+        // SQLITE_LIMIT_SQL_LENGTH, or the output cap can apply, so an authorized
+        // multi-GB regular file would tie up memory/CPU regardless of the budget.
+        // Under a bounding policy, refuse a file over the input ceiling up front.
+        // (Codex review P2, PR #1.)
+        if boundedRead,
+           policy.hardened || policy.forceReadOnly || policy.statementTimeout != nil {
+            let cap = policy.maxInputBytes ?? SQLitePolicy.defaultInputByteCeiling
+            if let size = Sqlite3Executable.regularFileSize(url.path), size > Int64(cap) {
+                err("Error: cannot read a file larger than \(cap) bytes under this policy\n")
+                exitCode = 1
+                return nil
+            }
         }
         return url
     }

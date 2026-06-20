@@ -45,7 +45,16 @@ working; harden only the escape/DoS boundary.
   SQL argument reading a pipe that never reaches EOF can still block before the
   budget is checked. Bounding that needs a cancellation-aware, `Sendable` stdin
   source (ShellKit's `InputSource`); the interactive REPL is refused outright under
-  a timeout for the same reason.
+  a timeout for the same reason. For the same "can't be interrupted mid-operation"
+  reason, **`.backup`/`.restore` are refused under a timeout-bounded policy** — a
+  synchronous full-database copy would run past the deadline (a deadline-checked
+  incremental copy needs the SDK's step-wise backup API; see below).
+- **Input-file cap** (`maxInputBytes`, 64 MiB under the hardened preset): `.read` /
+  `-init` / `.import` load a whole file via `String(contentsOf:)` before the budget,
+  `SQLITE_LIMIT_SQL_LENGTH`, or the output cap can apply, so under a bounding policy
+  an oversized authorized regular file is refused up front rather than slurped into
+  memory. (A non-regular target — FIFO/device/socket — is already refused so the
+  read can't block before the budget exists.)
 
 ## SDK follow-ups (need the `sqlite3*` handle — out of this package)
 
@@ -86,3 +95,8 @@ Each cites the SwiftSQLite source that implements it.
    to reject the VACUUM-INTO action at the SQLite tokenizer/authorizer level in
    the SDK (the shell only has the raw SQL string). Until then, keep the lexical
    guard. (Codex review P1, PR #1.)
+9. **Step-wise backup API** — `sqlite3_backup_init` / `_step(N)` / `_remaining` so a
+   timeout-bounded `.backup`/`.restore` can copy a page batch, check the deadline,
+   and resume or abort, instead of the current all-or-nothing `database.backup(to:)`.
+   Until then the shell refuses both under a `statementTimeout` (the synchronous copy
+   can't honor the budget). (Codex review P2, PR #1.)
