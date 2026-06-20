@@ -640,4 +640,47 @@ import Testing
         #expect(r.stderr.contains("multi-statement"))
         #expect(!FileManager.default.fileExists(atPath: aux.path))   // ATTACH never executed
     }
+
+    /// A quote inside a comment must not open a phantom string that hides the
+    /// following statement from the lexical guards (strippedForGuards single-pass
+    /// fix). Exercised through the accessible guards. (Codex review P1, PR #1.)
+    @Test func guardsSeeKeywordsAfterCommentWithQuote() {
+        #expect(Session.hasAttachStatement("/* ' */ ATTACH '/a' AS x"))
+        #expect(Session.attachHasNonLiteralTarget("/* ' */ ATTACH '/'||'a' AS x"))
+        #expect(Session.hasAttachStatement("-- '\n ATTACH '/a' AS x"))
+        // A comment marker inside a string is still part of the string (no false neg).
+        #expect(!Session.hasAttachStatement("SELECT '-- ATTACH x'"))
+        #expect(!Session.attachHasNonLiteralTarget("SELECT 'attach /* x */'"))
+    }
+
+    /// End-to-end: VACUUM INTO after a comment containing a quote must still be
+    /// blocked under an audit policy (writable, so only the lexical guard stops it).
+    /// (Codex review P1, PR #1.)
+    @Test func vacuumIntoBlockedAfterCommentWithQuote() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-vac-comment-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outDB = dir.appendingPathComponent("out.db")
+        let policy = SQLitePolicy(hardened: false, auditURL: dir.appendingPathComponent("trail.jsonl"))
+        let r = try await run([":memory:"], policy: policy,
+            input: "/* ' */ VACUUM INTO '\(outDB.path)';\n")
+        #expect(r.exit == 1)
+        #expect(!FileManager.default.fileExists(atPath: outDB.path))   // VACUUM INTO refused
+    }
+
+    /// Under audit, a SQLite `file:` URI ATTACH target must be refused: SQLite opens
+    /// its path component, not the literal string the reservation checks, so a URI
+    /// could point at the audit log's database. (Codex review P2, PR #1.)
+    @Test func auditRefusesFileUriAttach() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-uri-attach-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let policy = SQLitePolicy(hardened: false, auditURL: dir.appendingPathComponent("trail.jsonl"))
+        let r = try await run([":memory:"], policy: policy,
+            input: "ATTACH 'file:\(dir.path)/a.db?mode=rwc' AS aux;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("URI"))
+    }
 }

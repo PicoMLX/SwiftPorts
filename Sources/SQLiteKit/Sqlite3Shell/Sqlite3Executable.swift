@@ -212,7 +212,7 @@ public enum Sqlite3Executable {
     /// (Windows) there's no POSIX inode, so we fall back to that Foundation
     /// file id, which is the best identity check available there.)
     static func sameFile(_ a: String, _ b: String) -> Bool {
-#if canImport(Darwin) || canImport(Glibc)
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android)
         var sa = stat(), sb = stat()
         guard a.withCString({ stat($0, &sa) }) == 0,
               b.withCString({ stat($0, &sb) }) == 0 else { return false }
@@ -279,7 +279,7 @@ public enum Sqlite3Executable {
     /// `lstat` (not `stat`) so a symlink swapped onto the canonical leaf after
     /// authorization is rejected rather than followed. (Codex review P2, PR #1.)
     static func isRegularFileOrAbsent(_ path: String) -> Bool {
-#if canImport(Darwin) || canImport(Glibc)
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android)
         var info = stat()
         let rc = path.withCString { lstat($0, &info) }
         if rc != 0 { return errno == ENOENT }   // absent → fine (will be created)
@@ -413,11 +413,17 @@ final class Session {
         // mode must also block (matching the .backup / VACUUM INTO guards).
         if policy.hardened || policy.forceReadOnly {
             db.limit(SQLitePolicy.limitAttached, newValue: 0)
+            // Pin temp storage to memory: a file-backed TEMP database (PRAGMA
+            // temp_store=FILE + a TEMP table) is an in-band file-write channel that
+            // the read-only policy must also close, the same class as ATTACH /
+            // .backup / VACUUM INTO. (Without SQLITE_TEMP_STORE=3 the SQL surface can
+            // still flip temp_store, so the per-statement re-pin backs this up.)
+            // (Codex review P2, PR #1.)
+            _ = try? db.evaluate("PRAGMA temp_store=MEMORY;")
         }
         guard policy.hardened else { return }
         db.limit(SQLitePolicy.limitLength, newValue: SQLitePolicy.lengthCeiling)
         db.limit(SQLitePolicy.limitSQLLength, newValue: SQLitePolicy.sqlLengthCeiling)
-        _ = try? db.evaluate("PRAGMA temp_store=MEMORY;")
     }
 
     /// True (and arms shutdown) once the hardened script budget is exhausted.
@@ -528,26 +534,71 @@ final class Session {
     /// only thing the guard looks for is the VACUUM/INTO keywords, which are
     /// never identifiers or values; removing the quoted spans also lets the
     /// guard be whitespace-insensitive (an adjacent quoted schema like
-    /// `VACUUM[main]INTO` becomes `VACUUM INTO`). Strings are stripped before
-    /// comments so a comment marker inside a string isn't mistaken for a comment.
+    /// `VACUUM[main]INTO` becomes `VACUUM INTO`). A single left-to-right pass
+    /// recognizes whichever delimiter opens first, so a quote inside a comment is
+    /// part of the comment (not a string) and a comment marker inside a string is
+    /// part of the string. A prior version ran independent regex replacements
+    /// (strings, then comments), which let `/* ' */ VACUUM INTO 'x'` hide the
+    /// keyword — the in-comment quote opened a phantom string that swallowed it.
+    /// (Codex review P1, PR #1.)
     private static func strippedForGuards(_ sql: String) -> String {
-        var s = sql.replacingOccurrences(
-            of: #"'(?:[^']|'')*'"#, with: " ", options: .regularExpression)
-        // Double-quoted strings (escaped normal literal to avoid raw-string
-        // quote ambiguity): "  (?: [^"] | "" )*  "
-        s = s.replacingOccurrences(
-            of: "\"(?:[^\"]|\"\")*\"", with: " ", options: .regularExpression)
-        // Identifier quotes SQLite accepts in addition to "…": bracketed [name]
-        // and back-quoted `name` (\x60 = backtick).
-        s = s.replacingOccurrences(
-            of: #"\[[^\]]*\]"#, with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(
-            of: #"\x60[^\x60]*\x60"#, with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(
-            of: #"(?s)/\*.*?\*/"#, with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(
-            of: #"--[^\n]*"#, with: " ", options: .regularExpression)
-        return s
+        let cs = Array(sql)
+        let n = cs.count
+        var out = ""
+        out.reserveCapacity(n)
+        var i = 0
+        while i < n {
+            let c = cs[i]
+            if c == "-", i + 1 < n, cs[i + 1] == "-" {            // -- line comment
+                i += 2
+                while i < n, cs[i] != "\n" { i += 1 }
+                out += " "
+            } else if c == "/", i + 1 < n, cs[i + 1] == "*" {     // /* block comment */
+                i += 2
+                while i < n, !(cs[i] == "*" && i + 1 < n && cs[i + 1] == "/") { i += 1 }
+                if i < n { i += 2 }                                // consume the closing */
+                out += " "
+            } else if c == "'" {                                  // 'string literal'
+                i += 1
+                while i < n {
+                    if cs[i] == "'" {
+                        if i + 1 < n, cs[i + 1] == "'" { i += 2; continue }   // '' escape
+                        i += 1; break
+                    }
+                    i += 1
+                }
+                out += " "
+            } else if c == "\"" {                                 // "quoted identifier/string"
+                i += 1
+                while i < n {
+                    if cs[i] == "\"" {
+                        if i + 1 < n, cs[i + 1] == "\"" { i += 2; continue }
+                        i += 1; break
+                    }
+                    i += 1
+                }
+                out += " "
+            } else if c == "[" {                                  // [bracketed identifier]
+                i += 1
+                while i < n, cs[i] != "]" { i += 1 }
+                if i < n { i += 1 }
+                out += " "
+            } else if c == "`" {                                  // `back-quoted identifier`
+                i += 1
+                while i < n {
+                    if cs[i] == "`" {
+                        if i + 1 < n, cs[i + 1] == "`" { i += 2; continue }
+                        i += 1; break
+                    }
+                    i += 1
+                }
+                out += " "
+            } else {
+                out.append(c)
+                i += 1
+            }
+        }
+        return out
     }
 
     private func out(_ s: String) { emit(s, toStderr: false) }
@@ -803,6 +854,17 @@ final class Session {
             }
             for target in database.attachTargets(in: sql)
             where !target.isEmpty && target != ":memory:" {
+                // A SQLite URI target ('file:/path?params') is opened by SQLite as
+                // its decoded path component, not the literal string canonicalized
+                // and reserved here, so the sidecar collision check below would miss
+                // it. Refuse a URI target while an audit trail is active — use a
+                // plain path. (Codex review P2, PR #1.)
+                if auditCanonicalPath != nil,
+                   target.range(of: "file:", options: [.anchored, .caseInsensitive]) != nil {
+                    err("Error: cannot ATTACH a file: URI while an audit trail is active; use a plain path\n")
+                    exitCode = 1
+                    return false
+                }
                 let resolved = Sqlite3Executable.canonicalize(Shell.resolve(target))
                 // An ATTACH'd database writes its own -wal/-shm/-journal sidecars;
                 // refuse a target whose path (or a sidecar) is the audit log, the
@@ -1491,12 +1553,14 @@ final class Session {
     /// re-pin. (Codex review P1, PR #1.) The within-chunk case still needs SDK
     /// SQLITE_TEMP_STORE=3.
     private func repinTempStoreOrFailClosed() -> Bool {
-        guard policy.hardened else { return true }
+        // Re-pin under read-only as well as hardened: forceReadOnly must also keep
+        // temp storage in memory across statements (see applyHardening). (Codex P2.)
+        guard policy.hardened || policy.forceReadOnly else { return true }
         do {
             _ = try database.evaluate("PRAGMA temp_store=MEMORY;")
             return true
         } catch {
-            err("Error: hardened policy could not re-pin temp_store=MEMORY; refusing to run\n")
+            err("Error: hardened/read-only policy could not re-pin temp_store=MEMORY; refusing to run\n")
             exitCode = 1
             shouldQuit = true
             return false
