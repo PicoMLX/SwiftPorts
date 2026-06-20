@@ -294,6 +294,20 @@ public enum Sqlite3Executable {
 #endif
     }
 
+    /// Compare two file *paths* for equality — case-insensitively on the default
+    /// case-insensitive volumes (macOS/Windows), case-sensitively elsewhere.
+    /// `sameFile` settles *existing* files by identity; this also catches a target
+    /// that doesn't exist yet (e.g. a not-yet-created `-wal` sidecar) where only the
+    /// strings can be compared and a casing difference would otherwise slip a
+    /// redirect/ATTACH past the reservation. (Codex review P2, PR #1.)
+    static func pathsEqual(_ a: String, _ b: String) -> Bool {
+        #if canImport(Darwin) || os(Windows)
+        return a.caseInsensitiveCompare(b) == .orderedSame
+        #else
+        return a == b
+        #endif
+    }
+
     /// True if `auditPath` is the database at `dbPath` or one of the sidecar
     /// files SQLite derives from it (-wal/-shm/-journal). Keeps an in-band
     /// database open — the initial open *and* `.open`/`.backup`/`.restore` — from
@@ -301,7 +315,7 @@ public enum Sqlite3Executable {
     /// (Codex review P2, PR #1.)
     static func auditCollidesWithDatabase(auditPath: String, dbPath: String) -> Bool {
         let dbFiles = [dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + "-journal"]
-        return dbFiles.contains(where: { $0 == auditPath || sameFile($0, auditPath) })
+        return dbFiles.contains(where: { pathsEqual($0, auditPath) || sameFile($0, auditPath) })
     }
 }
 
@@ -484,6 +498,15 @@ final class Session {
         let masked = strippedForGuards(sql)
         guard let semi = masked.firstIndex(of: ";") else { return false }
         return masked[masked.index(after: semi)...].contains { !$0.isWhitespace }
+    }
+
+    /// True when `sql` contains an `ATTACH` statement at a statement boundary
+    /// (start of chunk or after a top-level `;`), after masking strings/comments so
+    /// `attach` inside a literal/identifier/comment doesn't count and `DETACH` is
+    /// excluded by the leading boundary. (Codex review P2, PR #1.)
+    static func hasAttachStatement(_ sql: String) -> Bool {
+        strippedForGuards(sql).range(
+            of: #"(?i)(?:^|;)\s*attach\b"#, options: .regularExpression) != nil
     }
 
     /// Bound a single audited record's size so an oversized untrusted statement
@@ -763,6 +786,18 @@ final class Session {
             // (Codex review P2, PR #1.)
             if auditCanonicalPath != nil, Self.attachHasNonLiteralTarget(sql) {
                 err("Error: cannot ATTACH a computed (non-literal) database filename while an audit trail is active\n")
+                exitCode = 1
+                return false
+            }
+            // attachTargets scans by *preparing* each statement to read its literal
+            // filename; in a multi-statement chunk a prepare failure (e.g. a later
+            // statement using schema an earlier one creates) halts that scan before a
+            // trailing ATTACH, whose target then skips the reservation below yet still
+            // runs in database.evaluate(sql). With an audit trail active, refuse a
+            // multi-statement chunk that contains ATTACH — submit the ATTACH on its
+            // own so the scan is complete. (Codex review P2, PR #1.)
+            if auditCanonicalPath != nil, Self.hasAttachStatement(sql), Self.hasTrailingStatement(sql) {
+                err("Error: cannot ATTACH inside a multi-statement command while an audit trail is active; run the ATTACH by itself\n")
                 exitCode = 1
                 return false
             }
@@ -1345,6 +1380,15 @@ final class Session {
                 if safeMode { database.enableSafeMode() }
                 applyHardening(to: database)
                 filename = path   // as-typed, matching sqlite3's `.show`
+                // A redirect set up *before* this `.open` (when the open DB was a
+                // different file or :memory:) may now point at the read-only database
+                // we just switched to — redirectHitsOpenDatabase only ran when the
+                // redirect was created. Re-check against the new database and drop a
+                // colliding redirect so finishOutput() can't overwrite it outside
+                // SQLite. (Codex review P2, PR #1.)
+                if let active = redirect, redirectHitsOpenDatabase(active.url) {
+                    redirect = nil
+                }
             } catch let error as SQLiteError {
                 // A denied open (e.g. the read-only policy rejecting a missing or
                 // unwritable target) must report failure, like the other read-only

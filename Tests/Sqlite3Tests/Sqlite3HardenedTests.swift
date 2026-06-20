@@ -568,4 +568,76 @@ import Testing
         #expect(r.stdout.contains("COUNT=2"))    // both inserts ran exactly once
         #expect(!r.stdout.contains("COUNT=3"))   // tail not double-executed via EQP
     }
+
+    /// `auditCollidesWithDatabase` must catch a not-yet-existing sidecar that differs
+    /// only in case on case-insensitive volumes (`sameFile` can't — the file is
+    /// absent — so only the strings can be compared). (Codex review P2, PR #1.)
+    @Test func sidecarCollisionIsCaseAwareForAbsentFiles() {
+        // Exact path and same-case sidecars always collide; an unrelated path never.
+        #expect(Sqlite3Executable.auditCollidesWithDatabase(auditPath: "/x/d.db", dbPath: "/x/d.db"))
+        #expect(Sqlite3Executable.auditCollidesWithDatabase(auditPath: "/x/d.db-wal", dbPath: "/x/d.db"))
+        #expect(!Sqlite3Executable.auditCollidesWithDatabase(auditPath: "/x/other.db", dbPath: "/x/d.db"))
+        // A case-differing sidecar of an *absent* file: collides on case-insensitive
+        // volumes (macOS/Windows), stays distinct on case-sensitive ones (Linux).
+        let caseColl = Sqlite3Executable.auditCollidesWithDatabase(auditPath: "/x/D.DB-WAL", dbPath: "/x/d.db")
+        #if canImport(Darwin) || os(Windows)
+        #expect(caseColl)
+        #else
+        #expect(!caseColl)
+        #endif
+    }
+
+    /// A redirect aimed at a path that *later* becomes the open read-only database
+    /// via `.open` must be dropped, not flushed over the database. redirectHits-
+    /// OpenDatabase only ran at redirect creation. (Codex review P2, PR #1.)
+    @Test func openDropsRedirectThatNowHitsReadOnlyDatabase() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-open-redir-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbPath = dir.appendingPathComponent("ro.db")
+        _ = try await run([dbPath.path], input: "CREATE TABLE seed(x);\n")   // a real DB
+        // :memory: + forceReadOnly: redirect at ro.db (no collision yet, open DB is
+        // memory), then .open ro.db (now the read-only DB), then .print. The stale
+        // redirect must be dropped so ro.db is not overwritten.
+        let r = try await run([":memory:"],
+            policy: SQLitePolicy(hardened: false, forceReadOnly: true),
+            input: ".output \(dbPath.path)\n.open \(dbPath.path)\n.print pwned\n")
+        #expect(r.exit == 1)
+        let bytes = try Data(contentsOf: dbPath)
+        #expect(!String(decoding: bytes, as: UTF8.self).contains("pwned"))
+    }
+
+    /// Unit-cover the statement-boundary ATTACH detector. (Codex review P2, PR #1.)
+    @Test func attachStatementDetection() {
+        #expect(Session.hasAttachStatement("ATTACH '/a' AS x"))
+        #expect(Session.hasAttachStatement("ATTACH DATABASE '/a' AS x"))
+        #expect(Session.hasAttachStatement("SELECT 1; ATTACH '/a' AS x"))
+        #expect(Session.hasAttachStatement("CREATE TABLE t(x); INSERT INTO t VALUES(1); ATTACH '/a' AS x;"))
+        #expect(!Session.hasAttachStatement("SELECT 'attach'; SELECT 1"))   // inside a string
+        #expect(!Session.hasAttachStatement("SELECT 1 -- attach '/a'\n"))   // inside a comment
+        #expect(!Session.hasAttachStatement("DETACH x"))                     // DETACH, not ATTACH
+        #expect(!Session.hasAttachStatement("SELECT detach_me FROM t"))      // substring in identifier
+    }
+
+    /// Under audit, a multi-statement chunk containing ATTACH must be refused: the
+    /// prepare-only attachTargets scan can stop before a trailing ATTACH (an
+    /// intervening statement needs schema an earlier one creates), so the target
+    /// would skip the sidecar reservation yet still execute. (Codex review P2, PR #1.)
+    @Test func auditRefusesMultiStatementAttach() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-multi-attach-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auditURL = dir.appendingPathComponent("trail.jsonl")
+        let aux = dir.appendingPathComponent("aux.db")
+        let policy = SQLitePolicy(hardened: false, auditURL: auditURL)
+        // Single line => one multi-statement chunk handed to evaluate. The prepare
+        // scan halts at INSERT (table t not yet created), missing the ATTACH.
+        let r = try await run([":memory:"], policy: policy,
+            input: "CREATE TABLE t(x); INSERT INTO t VALUES(1); ATTACH '\(aux.path)' AS aux;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("multi-statement"))
+        #expect(!FileManager.default.fileExists(atPath: aux.path))   // ATTACH never executed
+    }
 }
