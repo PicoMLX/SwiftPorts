@@ -568,7 +568,13 @@ final class Session {
                 // check, so a fail-closed audit blocks the echo too.
                 // sqlite3 reports a command-line argument as "line 0".
                 safeLine = context == .inline ? 0 : lineNo
+                let exitCodeBefore = exitCode
                 await handleDot(trimmed)
+                // A failed dot-command (policy denial, missing file, …) must halt
+                // when bail/inline says stop-on-error — matching the statement
+                // path below — rather than letting later statements run. handleDot
+                // reports failure by setting exitCode. (Codex review P2, PR #1.)
+                if exitCode != exitCodeBefore, stopsOnError() { return false }
                 continue
             }
             if buffer.isEmpty { statementStart = lineNo }

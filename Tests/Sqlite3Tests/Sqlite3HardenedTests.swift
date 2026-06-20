@@ -378,4 +378,22 @@ import Testing
         #expect(r.exit == 1)
         #expect(r.stderr.contains("audit log"))
     }
+
+    /// Under `.bail on`, a denied dot-command must stop the script — like a failed
+    /// statement — instead of letting later statements run. (Codex review P2, PR #1.)
+    @Test func bailStopsScriptAfterDeniedDotCommand() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-bail-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let auditURL = dir.appendingPathComponent("trail.jsonl")
+        let policy = SQLitePolicy(hardened: false, auditURL: auditURL)
+        // `.bail on`, then a denied `.output` at the audit log, then a SELECT that
+        // must NOT run because bail halts the script on the dot-command failure.
+        let r = try await run(
+            [":memory:"], policy: policy,
+            input: ".bail on\n.output \(auditURL.path)\nSELECT 'ranaway';\n")
+        #expect(r.exit == 1)
+        #expect(!r.stdout.contains("ranaway"))
+    }
 }
