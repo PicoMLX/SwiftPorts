@@ -336,6 +336,12 @@ final class Session {
     private var formatter: ResultFormatter
     /// The database filename as opened (":memory:" or a path), shown by `.show`.
     private var filename: String
+    /// Under `forceReadOnly`, the as-typed name of every database file opened this
+    /// run (initial open + each `.open`). They stay reserved against output
+    /// redirects for the whole run, even after `.open` switches away — otherwise
+    /// `.open :memory:` would let a redirect overwrite the file just opened
+    /// read-only. (Codex review P2, PR #1.)
+    private var reservedReadOnlyNames: Set<String> = []
     private let stdout: OutputSink
     private let stderr: OutputSink
     private let interactive: Bool
@@ -405,6 +411,7 @@ final class Session {
         self.auditCanonicalPath = policy.auditURL.map { Sqlite3Executable.canonicalize($0).path }
         self.deadline = policy.statementTimeout.map { Date().addingTimeInterval($0) }
         applyHardening(to: database)
+        reserveIfReadOnly(filename)
     }
 
     /// Apply the hardened-mode runtime controls to a freshly-opened handle:
@@ -1459,12 +1466,13 @@ final class Session {
                 if safeMode { database.enableSafeMode() }
                 applyHardening(to: database)
                 filename = path   // as-typed, matching sqlite3's `.show`
+                reserveIfReadOnly(path)   // keep this read-only DB reserved for the run
                 // A redirect set up *before* this `.open` (when the open DB was a
-                // different file or :memory:) may now point at the read-only database
-                // we just switched to — redirectHitsOpenDatabase only ran when the
-                // redirect was created. Re-check against the new database and drop a
-                // colliding redirect so finishOutput() can't overwrite it outside
-                // SQLite. (Codex review P2, PR #1.)
+                // different file or :memory:) may now point at a read-only database —
+                // the one just opened, or an earlier one still reserved.
+                // redirectHitsOpenDatabase only ran when the redirect was created, so
+                // re-check now and drop a colliding redirect so finishOutput() can't
+                // overwrite it outside SQLite. (Codex review P2, PR #1.)
                 if let active = redirect, redirectHitsOpenDatabase(active.url) {
                     redirect = nil
                 }
@@ -1548,16 +1556,28 @@ final class Session {
     /// trusted read-only guarantee. Returns true (after reporting) when denied.
     /// (Codex review P2, PR #1.)
     private func redirectHitsOpenDatabase(_ url: URL) -> Bool {
-        guard policy.forceReadOnly, filename != ":memory:", !filename.isEmpty else {
-            return false
+        guard policy.forceReadOnly else { return false }
+        // Check the redirect target against EVERY database file opened read-only
+        // this run — the current one and any since replaced by `.open` — so a file
+        // opened read-only can't be overwritten via a redirect after the shell
+        // switches away from it. (Codex review P2, PR #1.)
+        let collides = reservedReadOnlyNames.contains { name in
+            let dbPath = Sqlite3Executable.canonicalize(Shell.resolve(name)).path
+            return Sqlite3Executable.auditCollidesWithDatabase(auditPath: url.path, dbPath: dbPath)
         }
-        let openDB = Sqlite3Executable.canonicalize(Shell.resolve(filename)).path
-        guard Sqlite3Executable.auditCollidesWithDatabase(auditPath: url.path, dbPath: openDB) else {
-            return false
-        }
-        err("Error: cannot redirect output to the open database (or its -wal/-shm/-journal sidecar) under the read-only policy\n")
+        guard collides else { return false }
+        err("Error: cannot redirect output to a database opened under the read-only policy (or its -wal/-shm/-journal sidecar)\n")
         exitCode = 1
         return true
+    }
+
+    /// Record an opened database path so it stays reserved against output redirects
+    /// for the run (forceReadOnly only; `:memory:`/empty touch no file). Canonical
+    /// comparison is deferred to `redirectHitsOpenDatabase` so this is safe to call
+    /// from `init` before the resolve context is fully wired. (Codex review P2.)
+    private func reserveIfReadOnly(_ name: String) {
+        guard policy.forceReadOnly, name != ":memory:", !name.isEmpty else { return }
+        reservedReadOnlyNames.insert(name)
     }
 
     /// Re-pin temp_store=MEMORY (hardened only), failing closed if it can't be

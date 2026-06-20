@@ -458,7 +458,7 @@ import Testing
                               policy: SQLitePolicy(hardened: false, forceReadOnly: true),
                               input: ".output \(dbPath.path)\n.print pwned\n")
         #expect(r.exit == 1)
-        #expect(r.stderr.contains("open database"))
+        #expect(r.stderr.contains("read-only policy"))
         // The database file must not have been overwritten with the redirect text.
         let bytes = try Data(contentsOf: dbPath)
         #expect(!String(decoding: bytes, as: UTF8.self).contains("pwned"))
@@ -619,6 +619,26 @@ import Testing
         let r = try await run([":memory:"],
             policy: SQLitePolicy(hardened: false, forceReadOnly: true),
             input: ".output \(dbPath.path)\n.open \(dbPath.path)\n.print pwned\n")
+        #expect(r.exit == 1)
+        let bytes = try Data(contentsOf: dbPath)
+        #expect(!String(decoding: bytes, as: UTF8.self).contains("pwned"))
+    }
+
+    /// A database opened read-only stays reserved against redirects for the whole
+    /// run, even after `.open :memory:` switches away from it — otherwise a script
+    /// could overwrite it via `.output` once it is no longer the open DB.
+    /// (Codex review P2, PR #1.)
+    @Test func readOnlyKeepsPriorDatabaseReservedAfterOpenMemory() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-open-mem-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbPath = dir.appendingPathComponent("ro.db")
+        _ = try await run([dbPath.path], input: "CREATE TABLE seed(x);\n")   // a real DB
+        // Start on ro.db read-only, switch to :memory:, then try to overwrite ro.db.
+        let r = try await run([dbPath.path],
+            policy: SQLitePolicy(hardened: false, forceReadOnly: true),
+            input: ".open :memory:\n.output \(dbPath.path)\n.print pwned\n")
         #expect(r.exit == 1)
         let bytes = try Data(contentsOf: dbPath)
         #expect(!String(decoding: bytes, as: UTF8.self).contains("pwned"))
