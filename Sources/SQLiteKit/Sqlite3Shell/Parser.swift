@@ -18,6 +18,10 @@ enum Parser {
         var echo = false
         var bail = false
         var safe = false
+        /// Tighten-only request to turn on the hardened policy. It can only
+        /// *enable* hardening — there is no flag to disable a policy bound by
+        /// the embedder, by design (see `SQLitePolicy`).
+        var hardened = false
         var initFile: String?
         var commands: [String] = []
         var special: Special = .none
@@ -65,6 +69,7 @@ enum Parser {
             case "-echo": options.echo = true
             case "-bail": options.bail = true
             case "-safe": options.safe = true
+            case "-hardened": options.hardened = true
             case "-separator": options.separator = try value(for: arg)
             case "-nullvalue": options.nullValue = try value(for: arg)
             case "-init": options.initFile = try value(for: arg)
@@ -103,6 +108,11 @@ enum Parser {
       -batch             non-interactive mode
       -interactive       interactive mode (prompts; SQL run line-by-line)
       -safe              refuse dot-commands that touch the filesystem/shell
+      -hardened          turn on the hardened policy (result/time caps, temp
+                         pinning, .limit raise-blocking). Tighten-only: it can
+                         enable hardening but never disable a policy the host
+                         set. Under SwiftBash this is applied automatically
+                         when a sandbox is active.
 
       -list              values separated by .separator (default)
       -csv               comma-separated values

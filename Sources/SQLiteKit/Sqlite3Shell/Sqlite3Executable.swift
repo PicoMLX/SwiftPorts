@@ -1,6 +1,11 @@
 import Foundation
 import ShellKit
 import SQLiteKit
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Argv-level entry point for the `sqlite3` CLI. Returns the process exit
 /// code. Kept in its own enum — mirroring the other ports — so embedders
@@ -9,6 +14,7 @@ public enum Sqlite3Executable {
 
     @discardableResult
     public static func run(argv: [String],
+                           policy: SQLitePolicy = .permissive,
                            stdin: InputSource,
                            stdout: OutputSink,
                            stderr: OutputSink) async throws -> Int32 {
@@ -16,9 +22,21 @@ public enum Sqlite3Executable {
         do {
             options = try Parser.parse(argv)
         } catch let error as Parser.ArgError {
-            stderr.write("sqlite3: Error: \(error.message)\n")
+            // argv may have failed to parse, but a standalone `-hardened` request
+            // still means the output cap must apply — the bound policy alone is
+            // permissive on the standalone CLI. Pre-scan the raw argv for it.
+            // (argv can only tighten; over-matching just caps more, never less.)
+            let effective = (policy.hardened || argv.contains("-hardened"))
+                ? policy.tightenedToHardened() : policy
+            writeError("sqlite3: Error: \(error.message)\n", policy: effective, to: stderr)
             return 1
         }
+
+        // The effective policy is the embedder's, optionally *tightened* by an
+        // argv `-hardened` request. argv can only turn hardening on, never off
+        // — there is no path for the (untrusted) command line to relax a policy
+        // the trusted host bound.
+        let policy = options.hardened ? policy.tightenedToHardened() : policy
 
         switch options.special {
         case .help:
@@ -31,16 +49,67 @@ public enum Sqlite3Executable {
             break
         }
 
+        // Build the (embedder-controlled) audit destination FIRST so an explicit
+        // request fails closed before any SQL runs — and so the log file exists
+        // before the database-path check below, letting `canonicalize` resolve a
+        // database path that is a symlink to the (otherwise not-yet-created) log.
+        let audit: any AuditSink
+        if let auditURL = policy.auditURL {
+            let sink = FileAuditSink(url: auditURL)
+            do {
+                try await sink.preflight()
+            } catch {
+                // Don't echo the raw host path of the (embedder-set) audit log
+                // to the untrusted command's stderr. The thrown error carries an
+                // errno message (e.g. "Permission denied"), not the path.
+                writeError("sqlite3: Error: cannot open the configured audit log: \(error)\n", policy: policy, to: stderr)
+                return 1
+            }
+            audit = sink
+        } else {
+            audit = NoOpAuditSink()
+        }
+
         // Resolve + authorize the database file through ShellKit so the
         // tool honors the host's sandbox / path mapping. A missing name or
         // ":memory:" means a transient in-memory database.
         let location: SQLiteDatabase.Location
         if let path = options.databasePath, path != ":memory:", !path.isEmpty {
-            let url = Shell.resolve(path)
+            // Canonicalize (resolve symlinks) BEFORE authorizing, so the path we
+            // authorize is byte-identical to the one SQLite opens. This reduces
+            // — but does not eliminate — the symlink-swap window: fully closing
+            // it needs SQLITE_OPEN_NOFOLLOW, which lives in the SDK open.
+            let url = canonicalize(Shell.resolve(path))
+            // The database file must not be the audit log itself (directly or via
+            // a symlink — the log now exists, so canonicalize resolves it), or the
+            // run would use one file for both SQLite storage and the trusted JSONL
+            // trail (defeating "audit lives outside the DB").
+            if let auditURL = policy.auditURL {
+                let auditPath = canonicalize(auditURL).path
+                // The DB path and the sidecars SQLite derives from it (-wal/-shm/
+                // -journal) must not be the audit log, or opening the DB (incl. WAL
+                // mode) could clobber the trusted JSONL trail through a sidecar.
+                // (Codex review P2, PR #1.)
+                if auditCollidesWithDatabase(auditPath: auditPath, dbPath: url.path) {
+                    writeError("sqlite3: Error: the database path (or its -wal/-shm/-journal sidecar) may not be the audit log\n",
+                               policy: policy, to: stderr)
+                    return 1
+                }
+            }
             do {
                 try await Shell.authorize(url)
             } catch {
-                stderr.write("sqlite3: Error: \(error)\n")
+                writeError("sqlite3: Error: \(error)\n", policy: policy, to: stderr)
+                return 1
+            }
+            // Refuse a special file (FIFO/device/socket) as the database under a
+            // hardened/read-only policy, or any policy with a statementTimeout:
+            // opening it could block before the Session (and its timeout) exists, so
+            // the budget could never fire. (Codex review P2, PR #1.)
+            if policy.hardened || policy.forceReadOnly || policy.statementTimeout != nil,
+               !isRegularFileOrAbsent(url.path) {
+                writeError("sqlite3: Error: cannot open a non-regular file as the database under this policy\n",
+                           policy: policy, to: stderr)
                 return 1
             }
             location = .file(url.path)
@@ -50,9 +119,10 @@ public enum Sqlite3Executable {
 
         let database: SQLiteDatabase
         do {
-            database = try SQLiteDatabase(location, readonly: options.readonly)
+            database = try SQLiteDatabase(location,
+                                          readonly: options.readonly || policy.forceReadOnly)
         } catch let error as SQLiteError {
-            stderr.write("sqlite3: Error: \(error.message)\n")
+            writeError("sqlite3: Error: \(error.message)\n", policy: policy, to: stderr)
             return 1
         }
         // -safe also gates SQL-level filesystem access (ATTACH / load_extension)
@@ -85,14 +155,42 @@ public enum Sqlite3Executable {
             echo: options.echo,
             bail: options.bail,
             safeMode: options.safe,
+            policy: policy,
+            audit: audit,
             filename: filename)
+        // Reserve the initial database's canonical path (forceReadOnly) so a redirect
+        // can't overwrite it, even after `.open` switches away. (Codex review P2.)
+        if case .file(let opened) = location { session.reserveReadOnlyPath(opened) }
+
+        // Command-line setup — `-init FILE` then any `-cmd` — runs before the main
+        // input. Under any active policy (or `-bail`), a failed or policy-denied
+        // setup step must fail the whole run closed: skip the remaining setup, the
+        // trailing SQL argument, AND the stdin loop below, so e.g. a denied
+        // `VACUUM INTO …` (in an init file or a `-cmd`) can't be followed by a later
+        // statement running as if setup had succeeded. `requestStop()` arms the
+        // shutdown so the `!shouldQuit` guards below skip everything. The permissive
+        // policy keeps stock sqlite3's continue-on-error (an error there is reported
+        // but non-fatal unless `-bail`). (Codex review P2, PR #1.)
+        let failClosedOnSetupError = policy.hardened || policy.forceReadOnly
+            || policy.statementTimeout != nil || policy.auditURL != nil || options.bail
 
         // -init FILE, then any -cmd commands, before the main input.
         if let initFile = options.initFile {
             await session.runScript(path: initFile)
+            // runScript uses `.script` context, where `process` doesn't return false
+            // on a non-bail denial, so the observable failure signal is a nonzero
+            // exitCode (a policy denial, a SQL error, or an unreadable/denied init
+            // path all set it). exitCode is 0 until here, so any nonzero value is
+            // from the init script.
+            if failClosedOnSetupError, session.exitCode != 0 { session.requestStop() }
         }
         for command in options.commands where !session.shouldQuit {
-            _ = await session.process(command, context: .inline)
+            // `-cmd` is command-line SQL (`.inline`): `process` returns false on the
+            // first error/denial in the chunk. Fail closed the same way as -init.
+            if await session.process(command, context: .inline) == false, failClosedOnSetupError {
+                session.requestStop()
+                break
+            }
         }
 
         // A trailing SQL argument runs and exits; otherwise read stdin.
@@ -104,6 +202,16 @@ public enum Sqlite3Executable {
             if options.interactive {
                 await session.runInteractive(stdin: stdin)
             } else {
+                // KNOWN LIMITATION: this batch read is not bounded by statementTimeout.
+                // A stdin pipe that never reaches EOF (a sandboxed/hardened `sqlite3`
+                // with no SQL argument) can block here before `process` gets to check
+                // the budget between statements. Bounding it means racing the read in a
+                // child task, which requires ShellKit's `InputSource` to be `Sendable`
+                // (for the `@Sendable` task capture) and cancellation-aware — neither is
+                // verifiable from this package, so per maintainer decision it's left
+                // documented rather than risk an unverifiable change. The interactive
+                // REPL is refused outright under a timeout for the same reason (see
+                // `runInteractive`). (Codex review P2, PR #1.)
                 let input = await stdin.readAllString()
                 _ = await session.process(input, context: .script)
             }
@@ -111,6 +219,164 @@ public enum Sqlite3Executable {
 
         session.finishOutput()
         return session.exitCode
+    }
+
+    /// Fully symlink-resolve a sandbox URL so it can be authorized and opened
+    /// as one identical string. An existing file resolves whole; for a path
+    /// that doesn't exist yet (a new DB, a `.backup` target) the leaf has
+    /// nothing to resolve, so resolve the parent and re-attach the leaf. Falls
+    /// back to the input if neither resolves (the open / authorize then fails
+    /// closed). Used before every authorize so the authorized path matches the
+    /// opened one.
+    static func canonicalize(_ url: URL) -> URL {
+        if let resolved = realpathOrNil(url.path) {
+            return URL(fileURLWithPath: resolved)
+        }
+        let parent = url.deletingLastPathComponent().path
+        if let resolvedParent = realpathOrNil(parent) {
+            return URL(fileURLWithPath: resolvedParent)
+                .appendingPathComponent(url.lastPathComponent)
+        }
+        return url
+    }
+
+    /// True if the two paths refer to the same existing file — by POSIX device +
+    /// inode identity, so a hard link or alternate name to the same file is
+    /// caught even when the path strings differ. Returns false if either doesn't
+    /// exist (callers also do an exact canonical-path comparison for that case).
+    /// (Foundation's `fileResourceIdentifierKey` is unreliable on Linux — it
+    /// returns nil — so on Darwin/Glibc we stat directly. On other platforms
+    /// (Windows) there's no POSIX inode, so we fall back to that Foundation
+    /// file id, which is the best identity check available there.)
+    static func sameFile(_ a: String, _ b: String) -> Bool {
+#if canImport(Darwin) || canImport(Glibc)
+        var sa = stat(), sb = stat()
+        guard a.withCString({ stat($0, &sa) }) == 0,
+              b.withCString({ stat($0, &sb) }) == 0 else { return false }
+        return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino
+#else
+        // Non-POSIX (Windows): no inode. Use Foundation's file id so a hard
+        // link / alternate name to the configured audit log is still caught
+        // (best-effort, matching FileAuditSink's Windows leaf-guard caveat).
+        let keys: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard
+            let idA = try? URL(fileURLWithPath: a).resourceValues(forKeys: keys).fileResourceIdentifier,
+            let idB = try? URL(fileURLWithPath: b).resourceValues(forKeys: keys).fileResourceIdentifier
+        else { return false }
+        return idA.isEqual(idB)
+#endif
+    }
+
+    private static func realpathOrNil(_ path: String) -> String? {
+#if canImport(Darwin) || canImport(Glibc)
+        guard let c = realpath(path, nil) else { return nil }
+        defer { free(c) }
+        return String(cString: c)
+#else
+        // Windows / non-POSIX: best-effort symlink resolution via Foundation,
+        // returning nil for a non-existent path to mirror realpath's contract.
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+#endif
+    }
+
+    /// Emit a pre-`Session` error to stderr, honoring the hardened output cap.
+    /// The argv-parse / audit / authorize / open failures in `run` above all run
+    /// *before* the `Session` (and its capped `emit`) exists, so under a hardened
+    /// policy an untrusted invocation like `sqlite3 -<many MB>` — whose parse
+    /// error echoes the oversized argv — could otherwise stream an uncapped error
+    /// back to the caller, bypassing `maxResultBytes`. Cap here too, mirroring
+    /// `Session.emit`. Plain byte-prefix truncation (an error is one logical
+    /// line, so keep the "sqlite3: Error:" prefix); `String(decoding:)` lands on
+    /// a valid scalar boundary. (Codex review P2, PR #1.)
+    private static func writeError(_ message: String,
+                                   policy: SQLitePolicy,
+                                   to stderr: OutputSink) {
+        guard let rawCap = policy.maxResultBytes else {
+            stderr.write(message)
+            return
+        }
+        // `maxResultBytes` is public config; a negative value would trap
+        // `prefix(_:)`. Clamp to ≥ 0, mirroring Session.emit, which already
+        // tolerates non-positive caps. (Codex review P3, PR #1.)
+        let cap = max(0, rawCap)
+        guard message.utf8.count > cap else {
+            stderr.write(message)
+            return
+        }
+        stderr.write(String(decoding: message.utf8.prefix(cap), as: UTF8.self)
+            + "\n-- output truncated: hardened policy output cap (\(cap) bytes) reached\n")
+    }
+
+    /// True if `path` is safe to open without risking an indefinite block: it is
+    /// absent (a new file will be created) or an existing *regular* file. A FIFO,
+    /// device, or socket can block the open (e.g. an O_RDONLY/O_WRONLY FIFO with
+    /// no peer) before the `Session` and its `statementTimeout` exist, so reject
+    /// those — the same regular-file rule `FileAuditSink` enforces on its log.
+    /// `lstat` (not `stat`) so a symlink swapped onto the canonical leaf after
+    /// authorization is rejected rather than followed. (Codex review P2, PR #1.)
+    static func isRegularFileOrAbsent(_ path: String) -> Bool {
+#if canImport(Darwin) || canImport(Glibc)
+        var info = stat()
+        let rc = path.withCString { lstat($0, &info) }
+        if rc != 0 { return errno == ENOENT }   // absent → fine (will be created)
+        return (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
+#else
+        // Non-POSIX path — Windows, and Android (whose Bionic libc isn't importable
+        // as a POSIX module: `errno` is a macro and stat/lstat aren't in scope). Use
+        // Foundation's symlink-aware attribute lookup instead: allow only an absent
+        // path or a regular file, rejecting directories, sockets, devices, and FIFOs
+        // (reported as typeUnknown), so a FIFO/device target can't block the open
+        // before the session timeout exists. attributesOfItem throws for an absent
+        // path → treated as will-be-created. (Codex review P2, PR #1.)
+        guard let type = (try? FileManager.default.attributesOfItem(atPath: path))?[.type]
+                as? FileAttributeType
+        else { return true }
+        return type == .typeRegular
+#endif
+    }
+
+    /// The size in bytes of `path` if it is a regular file, else nil (absent, or
+    /// a non-regular file — which the file-read guard already refuses separately).
+    /// `lstat`, not `stat`, so a symlink swapped onto the canonical leaf after
+    /// authorization isn't followed — mirrors `isRegularFileOrAbsent`. Returns
+    /// `Int64` so a >2 GB size doesn't overflow `Int` on 32-bit. (Codex review
+    /// P2, PR #1.)
+    static func regularFileSize(_ path: String) -> Int64? {
+#if canImport(Darwin) || canImport(Glibc)
+        var info = stat()
+        guard path.withCString({ lstat($0, &info) }) == 0,
+              (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else { return nil }
+        return Int64(info.st_size)
+#else
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              (attrs[.type] as? FileAttributeType) == .typeRegular else { return nil }
+        return (attrs[.size] as? NSNumber)?.int64Value
+#endif
+    }
+
+    /// Compare two file *paths* for equality — case-insensitively on the default
+    /// case-insensitive volumes (macOS/Windows), case-sensitively elsewhere.
+    /// `sameFile` settles *existing* files by identity; this also catches a target
+    /// that doesn't exist yet (e.g. a not-yet-created `-wal` sidecar) where only the
+    /// strings can be compared and a casing difference would otherwise slip a
+    /// redirect/ATTACH past the reservation. (Codex review P2, PR #1.)
+    static func pathsEqual(_ a: String, _ b: String) -> Bool {
+        #if canImport(Darwin) || os(Windows)
+        return a.caseInsensitiveCompare(b) == .orderedSame
+        #else
+        return a == b
+        #endif
+    }
+
+    /// True if `auditPath` is the database at `dbPath` or one of the sidecar
+    /// files SQLite derives from it (-wal/-shm/-journal). Keeps an in-band
+    /// database open — the initial open *and* `.open`/`.backup`/`.restore` — from
+    /// clobbering the trusted audit trail through a sidecar write (e.g. WAL).
+    /// (Codex review P2, PR #1.)
+    static func auditCollidesWithDatabase(auditPath: String, dbPath: String) -> Bool {
+        let dbFiles = [dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + "-journal"]
+        return dbFiles.contains(where: { pathsEqual($0, auditPath) || sameFile($0, auditPath) })
     }
 }
 
@@ -126,6 +392,14 @@ final class Session {
     private var formatter: ResultFormatter
     /// The database filename as opened (":memory:" or a path), shown by `.show`.
     private var filename: String
+    /// Under `forceReadOnly`, the *canonical* path of every database file opened
+    /// this run (initial open + each `.open`), captured at open time. They stay
+    /// reserved against output redirects for the whole run, even after `.open`
+    /// switches away — otherwise `.open :memory:` would let a redirect overwrite the
+    /// file just opened read-only. Canonical-at-open (not re-resolved later) so a
+    /// symlink retargeted after the open can't move the reservation off the real
+    /// database. (Codex review P2, PR #1.)
+    private var reservedReadOnlyPaths: Set<String> = []
     private let stdout: OutputSink
     private let stderr: OutputSink
     private let interactive: Bool
@@ -136,6 +410,22 @@ final class Session {
     private var bail: Bool
     /// `-safe` mode: refuse dot-commands that touch the filesystem or shell.
     private let safeMode: Bool
+    /// The trusted, embedder-bound security policy (see `SQLitePolicy`).
+    private let policy: SQLitePolicy
+    /// Attempted-audit sink (no-op unless an audit destination was configured).
+    private let audit: any AuditSink
+    /// Canonical path of the audit log, if any — reserved so in-band
+    /// file-touching dot-commands (`.output`/`.backup`/…) can't overwrite the
+    /// trusted trail they were just appended to.
+    private let auditCanonicalPath: String?
+    /// Hardened-mode wall-clock script budget; `nil` when no timeout is set.
+    private let deadline: Date?
+    /// Bytes written to stdout so far, for the hardened output cap. Counts
+    /// ALL data output (result sets *and* data-bearing dot-commands), so the
+    /// cap can't be sidestepped by routing output through `.dump` / `.schema`.
+    private var outputBytesEmitted = 0
+    /// Set once the output cap has been hit, to suppress further output.
+    private var outputCapped = false
     /// Input line number of the dot-command currently dispatching, for the
     /// `-safe` refusal message (0 for a command-line argument).
     private var safeLine = 0
@@ -161,6 +451,8 @@ final class Session {
          echo: Bool,
          bail: Bool,
          safeMode: Bool = false,
+         policy: SQLitePolicy = .permissive,
+         audit: any AuditSink = NoOpAuditSink(),
          filename: String) {
         self.database = database
         self.formatter = formatter
@@ -172,12 +464,271 @@ final class Session {
         self.echo = echo
         self.bail = bail
         self.safeMode = safeMode
+        self.policy = policy
+        self.audit = audit
+        self.auditCanonicalPath = policy.auditURL.map { Sqlite3Executable.canonicalize($0).path }
+        self.deadline = policy.statementTimeout.map { Date().addingTimeInterval($0) }
+        applyHardening(to: database)
     }
 
-    private func out(_ s: String) {
-        if redirect != nil { redirect!.buffer += s } else { stdout.write(s) }
+    /// Apply the hardened-mode runtime controls to a freshly-opened handle:
+    /// disable ATTACH, clamp the length / SQL-length limits, and pin temp
+    /// storage in memory. Called on startup **and** after `.open`, so the
+    /// confinement can't be shed by reconnecting to a new database. It does
+    /// not touch the authorizer / PRAGMA / vtables, so vec0 + FTS5 keep working.
+    private func applyHardening(to db: SQLiteDatabase) {
+        // Disable ATTACH under *either* a read-only or hardened policy: ATTACH
+        // opens a writable auxiliary DB, an in-band file write that read-only
+        // mode must also block (matching the .backup / VACUUM INTO guards).
+        if policy.hardened || policy.forceReadOnly {
+            db.limit(SQLitePolicy.limitAttached, newValue: 0)
+            // Pin temp storage to memory: a file-backed TEMP database (PRAGMA
+            // temp_store=FILE + a TEMP table) is an in-band file-write channel that
+            // the read-only policy must also close, the same class as ATTACH /
+            // .backup / VACUUM INTO. (Without SQLITE_TEMP_STORE=3 the SQL surface can
+            // still flip temp_store, so the per-statement re-pin backs this up.)
+            // (Codex review P2, PR #1.)
+            _ = try? db.evaluate("PRAGMA temp_store=MEMORY;")
+        }
+        guard policy.hardened else { return }
+        db.limit(SQLitePolicy.limitLength, newValue: SQLitePolicy.lengthCeiling)
+        db.limit(SQLitePolicy.limitSQLLength, newValue: SQLitePolicy.sqlLengthCeiling)
     }
-    private func err(_ s: String) { stderr.write(s) }
+
+    /// True (and arms shutdown) once the hardened script budget is exhausted.
+    /// Checked between input chunks. This is a coarse *script* budget, not a
+    /// per-query interrupt: it cannot interrupt one long-running statement, and
+    /// because the shell hands a whole `;`-separated chunk to a single
+    /// `evaluate`, it also can't preempt *between* statements within one chunk.
+    /// Real per-statement / mid-query enforcement needs the SDK progress
+    /// handler + `sqlite3_interrupt` (see Docs/PORTING-FROM-SWIFTSQLITE.md).
+    private func budgetExceeded() -> Bool {
+        guard let deadline, Date() > deadline else { return false }
+        err("Error: hardened policy time budget exceeded\n")
+        exitCode = 1
+        shouldQuit = true
+        return true
+    }
+
+    /// Arm a full-run shutdown after a fatal inline failure (a failed or
+    /// policy-denied `-cmd`), so the trailing SQL argument and the stdin loop in
+    /// `run` are skipped via their `!shouldQuit` guards — the cross-argument
+    /// counterpart of the trailing-SQL loop's stop-on-error. The caller decides
+    /// when a `false` from `process` is fatal (only under an active policy or
+    /// `-bail`), so this just arms the flag. (Codex review P2, PR #1.)
+    func requestStop() { shouldQuit = true }
+
+    /// When a real audit sink is active, the JSONL record is byte-capped
+    /// (`maxAuditTextBytes`), so an oversized statement/command would be recorded
+    /// only in part while `runStatement`/`handleDot` execute it in full — its tail
+    /// could act without appearing in the trusted trail. Fail closed: refuse to run
+    /// what can't be recorded whole. No-op without an audit destination (nothing is
+    /// written, so a truncated `cappedAuditText` can't mislead). Returns true (after
+    /// reporting) when the text is too large to audit. (Codex review P2, PR #1.)
+    private func tooLargeToAudit(_ text: String) -> Bool {
+        guard auditCanonicalPath != nil,
+              text.utf8.count > Self.maxAuditTextBytes else { return false }
+        err("Error: input too large to audit in full; refusing to run it under an audit policy\n")
+        exitCode = 1
+        return true
+    }
+
+    /// Truncate `s` to at most `limit` UTF-8 bytes at a line boundary, so a
+    /// capped CSV/JSON render is cut between rows rather than mid-character.
+    private static func truncateToUTF8Bytes(_ s: String, limit: Int) -> String {
+        guard limit > 0, s.utf8.count > limit else { return s.utf8.count <= limit ? s : "" }
+        // Work on just the first `limit` bytes and cut at the last newline in
+        // them — no need to split the (potentially huge) whole string. A
+        // newline byte is a UTF-8 / Character boundary, so the slice is valid.
+        let prefix = s.utf8.prefix(limit)
+        guard let lastNewline = prefix.lastIndex(of: 0x0A) else { return "" }
+        return String(s[...lastNewline])
+    }
+
+    /// True if `sql` performs `VACUUM [schema] INTO …` (a direct file write).
+    /// Runs on string/comment/quoted-identifier-stripped SQL (see
+    /// `strippedForGuards`), so it is **whitespace-insensitive** and immune to
+    /// the quoted-schema forms SQLite accepts — bare, `[main]`, `` `main` ``, or
+    /// `"main"`, adjacent (`VACUUM[main]INTO`) or spaced — all of which collapse
+    /// to `vacuum … into`. **Anchored to a statement boundary** (`^` or after
+    /// `;`) so a value like `SELECT 'vacuum into'` (where VACUUM isn't the
+    /// leading keyword) is never misread. `[^;]` can't cross a real statement
+    /// boundary (no `;` survives inside a stripped literal) and `\binto\b` can't
+    /// match inside an identifier like `into_x`.
+    ///
+    /// Note: this is a *lexical* guard. A fully sound block needs the SQLite
+    /// tokenizer/authorizer (an SDK item — see Docs/PORTING-FROM-SWIFTSQLITE.md),
+    /// since the shell layer only sees the raw SQL string.
+    private static func writesViaVacuumInto(_ sql: String) -> Bool {
+        strippedForGuards(sql).range(
+            of: #"(?i)(?:^|;)\s*vacuum\b[^;]*\binto\b"#,
+            options: .regularExpression) != nil
+    }
+
+    /// Whether `sql` contains an `ATTACH` statement whose database-filename target
+    /// is not a single string literal — `ATTACH '/a/' || 'b.db' AS x`, a function,
+    /// a parameter, or a number. `SQLiteDatabase.attachTargets(in:)` only captures
+    /// literal filenames, so an expression target would slip past the audit-sidecar
+    /// reservation in `runStatement` and let SQLite create/delete the audit log's
+    /// -journal/-wal sidecar; with an audit trail active we refuse it. Built on
+    /// `strippedForGuards`, which collapses every string literal / quoted
+    /// identifier / comment to one space — so a literal target leaves only
+    /// whitespace between ATTACH (and the optional DATABASE keyword) and the AS
+    /// clause, while any expression leaves an operator or other token there. The
+    /// `(?!as\b)\S` matches that first non-whitespace token when it isn't `AS`.
+    /// The optional DATABASE keyword needs an alternation rather than a plain
+    /// `(?:database\b\s*)?` — an optional group backtracks (gives DATABASE back so
+    /// `\S` matches its `D`) and wrongly flags the literal `ATTACH DATABASE 'x' AS
+    /// y`. So either DATABASE is present and followed by a non-AS token, or the
+    /// first token isn't DATABASE/AS. Lexical, like the VACUUM-INTO guard; a fully
+    /// sound check needs the SDK tokenizer. (Codex review P2, PR #1.)
+    static func attachHasNonLiteralTarget(_ sql: String) -> Bool {
+        strippedForGuards(sql).range(
+            of: #"(?i)(?:^|;)\s*attach\b\s*(?:database\b\s*(?!as\b)\S|(?!database\b)(?!as\b)\S)"#,
+            options: .regularExpression) != nil
+    }
+
+    /// True when `sql` is more than one statement: after masking strings/comments
+    /// (so a `;` inside a literal or comment doesn't count) a `;` is followed by
+    /// further non-whitespace. Used to keep EQP from evaluate()-ing — and thus
+    /// executing — the tail of a multi-statement chunk. (Codex review P2, PR #1.)
+    static func hasTrailingStatement(_ sql: String) -> Bool {
+        let masked = strippedForGuards(sql)
+        guard let semi = masked.firstIndex(of: ";") else { return false }
+        return masked[masked.index(after: semi)...].contains { !$0.isWhitespace }
+    }
+
+    /// True when `sql` contains an `ATTACH` statement at a statement boundary
+    /// (start of chunk or after a top-level `;`), after masking strings/comments so
+    /// `attach` inside a literal/identifier/comment doesn't count and `DETACH` is
+    /// excluded by the leading boundary. (Codex review P2, PR #1.)
+    static func hasAttachStatement(_ sql: String) -> Bool {
+        strippedForGuards(sql).range(
+            of: #"(?i)(?:^|;)\s*attach\b"#, options: .regularExpression) != nil
+    }
+
+    /// Bound a single audited record's size so an oversized untrusted statement
+    /// can't bloat the out-of-DB JSONL trail. (SQLITE_LIMIT_SQL_LENGTH also caps
+    /// the SQL, but only at prepare time — after this record is written.)
+    private static let maxAuditTextBytes = 64 * 1024
+    private static func cappedAuditText(_ text: String) -> String {
+        guard text.utf8.count > maxAuditTextBytes else { return text }
+        return String(decoding: text.utf8.prefix(maxAuditTextBytes), as: UTF8.self) + "…[truncated]"
+    }
+
+    /// Strip everything that is *not* a bare keyword/operator so the VACUUM-INTO
+    /// guard matches only real keywords — never text inside a literal, comment,
+    /// or quoted identifier (which would wrongly refuse `SELECT 'vacuum into'` or
+    /// `SELECT [vacuum into]`). Removes string literals (`'…'`, `"…"`), the two
+    /// identifier-quote styles SQLite also accepts (`[…]`, `` `…` ``), and SQL
+    /// comments — collapsing each to a single space. Detection only; the
+    /// original SQL executes. Stripping the quoted forms is safe because the
+    /// only thing the guard looks for is the VACUUM/INTO keywords, which are
+    /// never identifiers or values; removing the quoted spans also lets the
+    /// guard be whitespace-insensitive (an adjacent quoted schema like
+    /// `VACUUM[main]INTO` becomes `VACUUM INTO`). A single left-to-right pass
+    /// recognizes whichever delimiter opens first, so a quote inside a comment is
+    /// part of the comment (not a string) and a comment marker inside a string is
+    /// part of the string. A prior version ran independent regex replacements
+    /// (strings, then comments), which let `/* ' */ VACUUM INTO 'x'` hide the
+    /// keyword — the in-comment quote opened a phantom string that swallowed it.
+    /// (Codex review P1, PR #1.)
+    private static func strippedForGuards(_ sql: String) -> String {
+        let cs = Array(sql)
+        let n = cs.count
+        var out = ""
+        out.reserveCapacity(n)
+        var i = 0
+        while i < n {
+            let c = cs[i]
+            if c == "-", i + 1 < n, cs[i + 1] == "-" {            // -- line comment
+                i += 2
+                while i < n, cs[i] != "\n" { i += 1 }
+                out += " "
+            } else if c == "/", i + 1 < n, cs[i + 1] == "*" {     // /* block comment */
+                i += 2
+                while i < n, !(cs[i] == "*" && i + 1 < n && cs[i + 1] == "/") { i += 1 }
+                if i < n { i += 2 }                                // consume the closing */
+                out += " "
+            } else if c == "'" {                                  // 'string literal'
+                i += 1
+                while i < n {
+                    if cs[i] == "'" {
+                        if i + 1 < n, cs[i + 1] == "'" { i += 2; continue }   // '' escape
+                        i += 1; break
+                    }
+                    i += 1
+                }
+                out += " "
+            } else if c == "\"" {                                 // "quoted identifier/string"
+                i += 1
+                while i < n {
+                    if cs[i] == "\"" {
+                        if i + 1 < n, cs[i + 1] == "\"" { i += 2; continue }
+                        i += 1; break
+                    }
+                    i += 1
+                }
+                out += " "
+            } else if c == "[" {                                  // [bracketed identifier]
+                i += 1
+                while i < n, cs[i] != "]" { i += 1 }
+                if i < n { i += 1 }
+                out += " "
+            } else if c == "`" {                                  // `back-quoted identifier`
+                i += 1
+                while i < n {
+                    if cs[i] == "`" {
+                        if i + 1 < n, cs[i + 1] == "`" { i += 2; continue }
+                        i += 1; break
+                    }
+                    i += 1
+                }
+                out += " "
+            } else {
+                out.append(c)
+                i += 1
+            }
+        }
+        return out
+    }
+
+    private func out(_ s: String) { emit(s, toStderr: false) }
+    private func err(_ s: String) { emit(s, toStderr: true) }
+
+    /// The central write path. Whenever a result-byte cap is configured — the
+    /// hardened preset sets one, but an embedder may set `maxResultBytes` on any
+    /// policy — it enforces the cap across ALL data emitted: stdout (SQL result
+    /// sets and data-bearing
+    /// dot-commands like `.dump`/`.schema`/`.print`, plus `.output` redirects)
+    /// **and** stderr (errors, caret blocks) — counted against one shared
+    /// budget, so a script can't exfiltrate unbounded bytes through either
+    /// stream. This bounds *output* (what flows back to the caller), not the
+    /// engine's per-statement materialization — a true row cap needs the SDK.
+    private func emit(_ s: String, toStderr: Bool) {
+        guard let cap = policy.maxResultBytes else {
+            rawWrite(s, toStderr: toStderr); return
+        }
+        if outputCapped { return }
+        let remaining = cap - outputBytesEmitted
+        if s.utf8.count <= remaining {
+            outputBytesEmitted += s.utf8.count
+            rawWrite(s, toStderr: toStderr)
+        } else {
+            rawWrite(Self.truncateToUTF8Bytes(s, limit: remaining), toStderr: toStderr)
+            rawWrite("\n-- output truncated: output cap (\(cap) bytes) reached\n",
+                     toStderr: toStderr)
+            outputCapped = true
+        }
+    }
+
+    /// Raw write to stderr, the active `.output`/`.once` redirect, or stdout,
+    /// bypassing the cap (used by `emit` itself to write the truncation notice).
+    private func rawWrite(_ s: String, toStderr: Bool) {
+        if toStderr { stderr.write(s) }
+        else if redirect != nil { redirect!.buffer += s }
+        else { stdout.write(s) }
+    }
 
     /// Flushes the current `.output`/`.once` redirect to its file and
     /// reverts to stdout. Called at end of input too.
@@ -209,14 +760,26 @@ final class Session {
         func stopsOnError() -> Bool { context == .inline || bail }
         for line in lines {
             if shouldQuit { return true }
+            if budgetExceeded() { return false }
             lineNo += 1
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Dot-commands are only recognized at a statement boundary.
             if buffer.isEmpty && trimmed.hasPrefix(".") {
-                if echo { out(trimmed + "\n") }
+                // Echo happens inside handleDot, *after* the attempted-audit
+                // check, so a fail-closed audit blocks the echo too.
                 // sqlite3 reports a command-line argument as "line 0".
                 safeLine = context == .inline ? 0 : lineNo
+                // Detect *this* command's failure in isolation: zero exitCode across
+                // the call so a denial is caught even when a prior (non-bail) error
+                // already set it, then restore the prior code. A failed dot-command
+                // must halt when bail/inline says stop-on-error, matching the
+                // statement path below. (Codex review P2, PR #1.)
+                let priorExit = exitCode
+                exitCode = 0
                 await handleDot(trimmed)
+                let dotFailed = exitCode != 0
+                if priorExit != 0 { exitCode = priorExit }
+                if dotFailed, stopsOnError() { return false }
                 continue
             }
             if buffer.isEmpty { statementStart = lineNo }
@@ -229,14 +792,22 @@ final class Session {
                 }
             }
         }
-        // SQLite runs a final statement even without a trailing semicolon.
+        // SQLite runs a final statement even without a trailing semicolon —
+        // but not once we've quit or the hardened time budget is spent.
         let leftover = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         buffer = ""
-        if !leftover.isEmpty {
+        if !leftover.isEmpty, !shouldQuit, !budgetExceeded() {
             if !(await runStatement(leftover, startLine: statementStart, context: context)) && stopsOnError() {
                 return false
             }
         }
+        // The final completed statement runs inside the loop above (the per-
+        // iteration check only fires *before* the next line), and the leftover
+        // check is skipped when there's no trailing fragment — so without this
+        // a last statement that overran the deadline would still exit 0.
+        // budgetExceeded() sets exitCode=1; guard on shouldQuit so a budget
+        // already reported above (or a .quit) isn't re-reported.
+        if !shouldQuit { _ = budgetExceeded() }
         return true
     }
 
@@ -256,6 +827,16 @@ final class Session {
     /// left to the host: installing a process-global signal handler from a
     /// library would be wrong.
     func runInteractive(stdin: InputSource) async {
+        // A configured statementTimeout can't bound a blocking `readLine()` — an
+        // untrusted argv could select `-interactive` and sit at the prompt forever,
+        // dodging the budget (the per-line check only runs *after* a line arrives).
+        // Refuse interactive mode when a timeout is set (the hardened preset sets
+        // one) rather than run unbounded. (Codex review P2, PR #1.)
+        if policy.statementTimeout != nil {
+            err("Error: interactive mode is not available under a timeout-bounded policy\n")
+            exitCode = 1
+            return
+        }
         out(Self.banner)
         var lineNo = 0
         var statementStart = 1
@@ -263,12 +844,12 @@ final class Session {
             // The continuation prompt shows while a statement is still open.
             out(buffer.isEmpty ? "sqlite> " : "   ...> ")
             guard let line = await stdin.readLine() else { out("\n"); break }
+            if budgetExceeded() { break }
             lineNo += 1
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // Dot-commands are recognized only at a statement boundary.
             if buffer.isEmpty && trimmed.hasPrefix(".") {
-                if echo { out(trimmed + "\n") }
-                safeLine = lineNo
+                safeLine = lineNo   // echo happens inside handleDot, after audit
                 await handleDot(trimmed)
                 continue
             }
@@ -280,30 +861,129 @@ final class Session {
                 _ = await runStatement(sql, startLine: statementStart, context: .interactive)
             }
         }
-        // Run a trailing statement left unterminated at EOF, like sqlite3.
+        // Run a trailing statement left unterminated at EOF, like sqlite3 —
+        // unless we've quit or the hardened time budget is already spent.
         let leftover = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
         buffer = ""
-        if !leftover.isEmpty {
+        if !leftover.isEmpty, !shouldQuit, !budgetExceeded() {
             _ = await runStatement(leftover, startLine: statementStart, context: .interactive)
         }
+        // Mirror `process`: re-check the budget after the loop. The final
+        // completed statement runs inside the loop (the per-line check only
+        // fires *before* the next read), and the leftover branch is skipped when
+        // EOF arrives with no trailing fragment — so without this a last
+        // statement that overran statementTimeout would still exit 0.
+        if !shouldQuit { _ = budgetExceeded() }
     }
 
     /// Runs one chunk of SQL and renders any result sets. Returns `false`
     /// on error (after reporting it).
     @discardableResult
     private func runStatement(_ sql: String, startLine: Int, context: SourceContext) async -> Bool {
+        // Attempted-audit (intent) FIRST — before echo / EXPLAIN QUERY PLAN /
+        // any DB work — so a fail-closed audit blocks *all* effects of the
+        // statement, not just the main evaluate. Fail closed: if the trail
+        // can't be written, refuse the statement. No-op (always true) unless an
+        // audit destination was configured by the embedder.
+        let auditText = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Refuse before recording if the statement can't be captured whole (its
+        // tail would execute but not appear in the trail). (Codex review P2, PR #1.)
+        if tooLargeToAudit(auditText) { return false }
+        if await audit.record(.attempted(kind: "sql", text: Self.cappedAuditText(auditText))) == false {
+            err("Error: audit write failed; refusing to run unaudited statement\n")
+            exitCode = 1
+            shouldQuit = true
+            return false
+        }
+        // NOTE: there is intentionally no lexical guard against `PRAGMA
+        // temp_store=…`. Across rounds it proved impossible to detect soundly —
+        // SQLite accepts the pragma name bare or quoted as '…', "…", […], `…`,
+        // and a `;` can appear inside any string, so every regex either missed a
+        // form or refused legitimate value literals. Temp confinement instead
+        // rests on the per-statement re-pin below (reliable across statements)
+        // and, for the within-chunk case, the SDK compile flag
+        // SQLITE_TEMP_STORE=3 (the real boundary — Docs/PORTING-FROM-SWIFTSQLITE.md).
+        // `VACUUM INTO 'file'` writes a new database file directly (SQLite opens
+        // it itself, bypassing Shell.authorize and the `.backup` read-only
+        // block — and it works even from a read-only source). Refuse it under a
+        // hardened or read-only policy, the same class as ATTACH/.backup.
+        // ...and also whenever an audit sink is active: VACUUM INTO writes a DB
+        // file (with its own -wal/-journal sidecars) directly, which can't be
+        // reserved against the audit log or audited. (Codex review P2, PR #1.)
+        if policy.hardened || policy.forceReadOnly || policy.auditURL != nil,
+           Self.writesViaVacuumInto(sql) {
+            err("Error: VACUUM INTO is not permitted under the hardened/read-only/audit policy\n")
+            exitCode = 1
+            return false
+        }
         if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
-        if eqp { renderQueryPlan(sql) }
+        // Re-pin temp_store=MEMORY before ANY DB-backed work this statement —
+        // including the EXPLAIN QUERY PLAN rendering below, which evaluate()s the
+        // query — so temp confinement holds across statement boundaries even if an
+        // earlier statement set FILE; fail closed if it can't be applied (see
+        // helper). The within-chunk case is covered by the SDK compile flag
+        // SQLITE_TEMP_STORE=3. (Re-pin precedes EQP per Codex review P2, PR #1.)
+        if !repinTempStoreOrFailClosed() { return false }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
         // `.open` take. (`-safe` blocks ATTACH outright via its authorizer,
         // so this is the non-safe confinement path; `:memory:` / temp ATTACHes
-        // touch no file and are skipped.)
+        // touch no file and are skipped. In hardened mode ATTACH also fails via
+        // SQLITE_LIMIT_ATTACHED=0, so this canonicalize+authorize only matters
+        // on the permissive path.)
         if !safeMode, sql.range(of: "attach", options: .caseInsensitive) != nil {
+            // A non-literal ATTACH filename — `ATTACH '/d/' || 'x.db' AS a`, a
+            // function, parameter, or number — isn't returned by attachTargets, so
+            // it would slip past the audit-sidecar reservation below and let SQLite
+            // create/delete the audit log's -journal/-wal sidecar. attachTargets
+            // only sees literal filenames; with an audit trail active, refuse the
+            // expression form rather than open a path the gate never resolved.
+            // (hardened / forceReadOnly already block *all* ATTACH via
+            // SQLITE_LIMIT_ATTACHED=0, so this closes the audit-only gap.)
+            // (Codex review P2, PR #1.)
+            if auditCanonicalPath != nil, Self.attachHasNonLiteralTarget(sql) {
+                err("Error: cannot ATTACH a computed (non-literal) database filename while an audit trail is active\n")
+                exitCode = 1
+                return false
+            }
+            // attachTargets scans by *preparing* each statement to read its literal
+            // filename; in a multi-statement chunk a prepare failure (e.g. a later
+            // statement using schema an earlier one creates) halts that scan before a
+            // trailing ATTACH, whose target then skips the reservation below yet still
+            // runs in database.evaluate(sql). With an audit trail active, refuse a
+            // multi-statement chunk that contains ATTACH — submit the ATTACH on its
+            // own so the scan is complete. (Codex review P2, PR #1.)
+            if auditCanonicalPath != nil, Self.hasAttachStatement(sql), Self.hasTrailingStatement(sql) {
+                err("Error: cannot ATTACH inside a multi-statement command while an audit trail is active; run the ATTACH by itself\n")
+                exitCode = 1
+                return false
+            }
             for target in database.attachTargets(in: sql)
             where !target.isEmpty && target != ":memory:" {
+                // A SQLite URI target ('file:/path?params') is opened by SQLite as
+                // its decoded path component, not the literal string canonicalized
+                // and reserved here, so the sidecar collision check below would miss
+                // it. Refuse a URI target while an audit trail is active — use a
+                // plain path. (Codex review P2, PR #1.)
+                if auditCanonicalPath != nil,
+                   target.range(of: "file:", options: [.anchored, .caseInsensitive]) != nil {
+                    err("Error: cannot ATTACH a file: URI while an audit trail is active; use a plain path\n")
+                    exitCode = 1
+                    return false
+                }
+                let resolved = Sqlite3Executable.canonicalize(Shell.resolve(target))
+                // An ATTACH'd database writes its own -wal/-shm/-journal sidecars;
+                // refuse a target whose path (or a sidecar) is the audit log, the
+                // same reservation the initial open and dot-commands apply.
+                // (Codex review P2, PR #1.)
+                if let auditCanonicalPath,
+                   Sqlite3Executable.auditCollidesWithDatabase(auditPath: auditCanonicalPath, dbPath: resolved.path) {
+                    err("Error: cannot ATTACH a database whose path (or -wal/-shm/-journal sidecar) is the audit log\n")
+                    exitCode = 1
+                    return false
+                }
                 do {
-                    try await Shell.authorize(Shell.resolve(target))
+                    try await Shell.authorize(resolved)
                 } catch {
                     err("Error: \(error)\n")
                     exitCode = 1
@@ -311,9 +991,16 @@ final class Session {
                 }
             }
         }
+        // EQP rendering runs *after* the ATTACH gate: renderQueryPlan evaluate()s the
+        // statement, and for a multi-statement chunk the EXPLAIN prefix covers only
+        // the first — so the tail (e.g. an ATTACH) would otherwise execute before the
+        // gate could vet it. renderQueryPlan also refuses multi-statement chunks
+        // outright; this ordering is belt-and-suspenders. (Codex review P2, PR #1.)
+        if eqp { renderQueryPlan(sql) }
         do {
             for set in try database.evaluate(sql) {
                 out(formatter.render(set))
+                if outputCapped { break }   // stop rendering further sets once capped
             }
             if changesMode {
                 out("changes: \(database.changes)   total_changes: \(database.totalChanges)\n")
@@ -356,9 +1043,16 @@ final class Session {
             header = error.phase == .prepare ? "Error: in prepare, " : "Error: stepping, "
             exitCode = error.code
         case .interactive:
-            // The REPL keeps going on error (no exit code) and omits the
-            // line number that script context carries.
+            // The REPL keeps going on error and omits the line number that script
+            // context carries. But a security policy must not be silently
+            // escapable by selecting -interactive: under hardened *or* read-only,
+            // a policy denial — a blocked write under read-only, or an ATTACH /
+            // oversized statement refused by hardened's SQLITE_LIMIT_* — must still
+            // surface a nonzero exit, so a policy-denied run can't look successful
+            // to the caller. The plain (permissive) REPL still leaves exit unset.
+            // (Codex review P2, PR #1.)
             header = (error.phase == .prepare ? "Parse error: " : "Runtime error: ")
+            if policy.forceReadOnly || policy.hardened { exitCode = 1 }
         }
         var message = error.message
         if error.phase == .step { message += " (\(error.code))" }
@@ -393,6 +1087,11 @@ final class Session {
     /// connectors.
     private func renderQueryPlan(_ sql: String) {
         let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+        // EXPLAIN QUERY PLAN prefixes only the first statement; in a multi-statement
+        // chunk every later statement EXECUTES during this evaluate (its side effects
+        // run here — e.g. an ATTACH — and a second time in the real run below). Skip
+        // the plan for such chunks rather than run their tail. (Codex review P2, PR #1.)
+        if Self.hasTrailingStatement(trimmed) { return }
         guard let plan = try? database.evaluate("EXPLAIN QUERY PLAN \(trimmed)").first,
               !plan.rows.isEmpty else { return }
         let nodes: [(id: Int, parent: Int, detail: String)] = plan.rows.compactMap { row in
@@ -418,6 +1117,21 @@ final class Session {
         let tokens = Self.tokenize(line)
         guard let command = tokens.first else { return }
         let args = Array(tokens.dropFirst())
+
+        // Attempted-audit: a dot-command is an LLM-controlled in-band action,
+        // so it belongs in the trail just like a SQL statement — and fails
+        // closed the same way (no audit, no action).
+        if tooLargeToAudit(line) { return }   // refuse if it can't be recorded whole
+        if await audit.record(.attempted(kind: "dot", text: Self.cappedAuditText(line))) == false {
+            err("Error: audit write failed; refusing unaudited command\n")
+            exitCode = 1
+            shouldQuit = true
+            return
+        }
+
+        // `-echo` mirrors the command back *after* it's been audited, so a
+        // fail-closed audit suppresses the echo too (no echo without a trail).
+        if echo { out(line + "\n") }
 
         // `-safe` refuses any dot-command that could touch the filesystem or
         // shell, and aborts — matching sqlite3. (SQL-level restrictions like
@@ -489,15 +1203,21 @@ final class Session {
                     WHERE type != 'meta' AND sql NOT NULL AND name NOT LIKE 'sqlite_%'
                     ORDER BY x;
                     """).first?.rows.compactMap { $0.first?.cliText } ?? []
-                for sql in schema { out(sql + ";\n") }
+                for sql in schema {
+                    if outputCapped { break }
+                    out(sql + ";\n")
+                }
+                if outputCapped { return }
                 let hasStats = try !(database.evaluate(
                     "SELECT 1 FROM sqlite_schema WHERE name GLOB 'sqlite_stat[134]' LIMIT 1;")
                     .first?.rows.isEmpty ?? true)
                 guard hasStats else { out("/* No STAT tables available */\n"); return }
                 out("ANALYZE sqlite_schema;\n")
                 for statTable in ["sqlite_stat1", "sqlite_stat4"] where try tableExists(statTable) {
+                    if outputCapped { break }
                     let rows = try database.evaluate("SELECT * FROM \(statTable);").first?.rows ?? []
                     for row in rows {
+                        if outputCapped { break }
                         out("INSERT INTO \(statTable) VALUES(\(row.map(\.sqlLiteral).joined(separator: ",")));\n")
                     }
                 }
@@ -534,8 +1254,19 @@ final class Session {
                     ORDER BY rowid;
                     """).first?.rows ?? []
                 for t in tables {
+                    // .dump runs inside one dot-command; check the deadline between
+                    // tables (and rows, below) so a large DB can't keep emitting past
+                    // statementTimeout. A single huge table's SELECT still materializes
+                    // in one evaluate (the SDK-stepping limitation the output cap also
+                    // has — see PORTING-FROM-SWIFTSQLITE follow-up). (Codex review P2, PR #1.)
+                    if budgetExceeded() { return }
+                    if outputCapped { break }   // stop querying once the cap is hit
                     guard case .text(let name) = t[0], case .text(let createSQL) = t[1] else { continue }
                     out(createSQL + ";\n")
+                    // Emitting the schema line may have hit the cap; don't then
+                    // introspect columns / materialize this table's rows for output
+                    // that would be dropped.
+                    if outputCapped { break }
                     // Quote the table name the way sqlite3 does — bare for a
                     // simple identifier, double-quoted otherwise — so both the
                     // read-back and the emitted INSERTs stay valid for any name.
@@ -550,6 +1281,8 @@ final class Session {
                         : cols.map { SQLiteDatabase.quoteIdentifier($0) }.joined(separator: ",")
                     let rows = try database.evaluate("SELECT \(selectList) FROM \(ident);").first?.rows ?? []
                     for row in rows {
+                        if budgetExceeded() { return }   // deadline between rows
+                        if outputCapped { break }
                         out("INSERT INTO \(ident) VALUES(\(row.map(\.sqlLiteral).joined(separator: ",")));\n")
                     }
                 }
@@ -562,17 +1295,22 @@ final class Session {
                     let seq = try database.evaluate(
                         "SELECT name, seq FROM sqlite_sequence ORDER BY rowid;").first?.rows ?? []
                     for row in seq {
+                        if outputCapped { break }
                         out("INSERT INTO sqlite_sequence VALUES(\(row.map(\.sqlLiteral).joined(separator: ",")));\n")
                     }
                 }
                 // Then views + triggers, then indexes last (sqlite3's order).
                 let objFilter = only.map { " AND tbl_name = '\(SQLiteDatabase.quote($0))'" } ?? ""
                 for types in ["'view','trigger'", "'index'"] {
+                    if outputCapped { break }
                     let sqls = try database.evaluate("""
                         SELECT sql FROM sqlite_schema
                         WHERE type IN (\(types)) AND sql NOT NULL\(objFilter) ORDER BY rowid;
                         """).first?.rows.compactMap { $0.first?.cliText } ?? []
-                    for sql in sqls { out(sql + ";\n") }
+                    for sql in sqls {
+                        if outputCapped { break }
+                        out(sql + ";\n")
+                    }
                 }
                 out("COMMIT;\n")
             }
@@ -646,6 +1384,7 @@ final class Session {
             finishOutput()
             if let path = args.first {
                 guard let url = await resolveAuthorized(path) else { return }
+                if redirectHitsOpenDatabase(url) { return }
                 redirect = Redirect(url: url, buffer: "", once: false)
             }
 
@@ -656,14 +1395,25 @@ final class Session {
             }
             finishOutput()
             guard let url = await resolveAuthorized(path) else { return }
+            if redirectHitsOpenDatabase(url) { return }
             redirect = Redirect(url: url, buffer: "", once: true)
 
         case ".import":
+            // `.import` writes rows into the database — an in-band write the
+            // trusted read-only policy must refuse up front (like `.backup`/
+            // `.restore`): otherwise the per-row INSERT error is swallowed inside
+            // `introspect` without setting exitCode, so the run reports success
+            // despite the policy blocking the write. (Codex review P2, PR #1.)
+            if policy.forceReadOnly {
+                err("Error: .import is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
             guard args.count >= 2 else {
                 err("Error: .import expects FILE and TABLE\n")
                 return
             }
-            guard let url = await resolveAuthorized(args[0]) else { return }
+            guard let url = await resolveAuthorized(args[0], boundedRead: true) else { return }
             let text: String
             do {
                 text = try String(contentsOf: url, encoding: .utf8)
@@ -675,6 +1425,26 @@ final class Session {
             importDelimited(text, into: args[1])
 
         case ".backup":
+            // `.backup` creates/writes a database file — a write the trusted
+            // read-only policy must not allow in-band (the destination can't be
+            // opened read-only and still receive the backup).
+            if policy.forceReadOnly {
+                err("Error: .backup is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
+            // A synchronous full-database copy can't honor the script budget:
+            // `database.backup(to:)` returns only once the whole copy is done, so
+            // under a timeout-bounded policy a large authorized DB would keep
+            // copying past the deadline (the between-statements check never gets a
+            // turn). Refuse it — like interactive mode — rather than run unbounded;
+            // a deadline-checked incremental copy would need the SDK's step-wise
+            // backup API. (Codex review P2, PR #1.)
+            if policy.statementTimeout != nil {
+                err("Error: .backup is not available under a timeout-bounded policy\n")
+                exitCode = 1
+                return
+            }
             guard let (dbName, path) = Self.dbAndFile(args) else {
                 err("Error: .backup expects ?DB? FILE\n")
                 return
@@ -693,6 +1463,23 @@ final class Session {
             }
 
         case ".restore":
+            // `.restore` writes into the main database, which is read-only under
+            // the policy; refuse explicitly rather than surface a raw SQLite
+            // "readonly database" error.
+            if policy.forceReadOnly {
+                err("Error: .restore is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
+            // Same budget gap as `.backup`: the synchronous copy into the main DB
+            // can't be interrupted by statementTimeout, so refuse `.restore` under
+            // a timeout-bounded policy rather than copy a large source unbounded.
+            // (Codex review P2, PR #1.)
+            if policy.statementTimeout != nil {
+                err("Error: .restore is not available under a timeout-bounded policy\n")
+                exitCode = 1
+                return
+            }
             guard let (dbName, path) = Self.dbAndFile(args) else {
                 err("Error: .restore expects ?DB? FILE\n")
                 return
@@ -779,15 +1566,39 @@ final class Session {
                 location = .memory
             }
             do {
-                let replacement = try SQLiteDatabase(location)
+                // Honor the trusted read-only policy on the new handle too —
+                // otherwise `.open writable.db` would relax forceReadOnly in-band.
+                let replacement = try SQLiteDatabase(location, readonly: policy.forceReadOnly)
                 database.close()
                 database = replacement
-                if safeMode { database.enableSafeMode() }   // re-arm on the new connection
+                // Re-apply the full policy to the new handle, not just safe
+                // mode — otherwise an LLM could shed the hardened limits / temp
+                // pinning by reconnecting via `.open` (control-surface rule).
+                if safeMode { database.enableSafeMode() }
+                applyHardening(to: database)
                 filename = path   // as-typed, matching sqlite3's `.show`
+                // Reserve the *canonical* opened path (resolveAuthorized resolved it)
+                // for the run, so it stays protected from redirects even after a
+                // later `.open`. (Codex review P2, PR #1.)
+                if case .file(let opened) = location { reserveReadOnlyPath(opened) }
+                // A redirect set up *before* this `.open` (when the open DB was a
+                // different file or :memory:) may now point at a read-only database —
+                // the one just opened, or an earlier one still reserved.
+                // redirectHitsOpenDatabase only ran when the redirect was created, so
+                // re-check now and drop a colliding redirect so finishOutput() can't
+                // overwrite it outside SQLite. (Codex review P2, PR #1.)
+                if let active = redirect, redirectHitsOpenDatabase(active.url) {
+                    redirect = nil
+                }
             } catch let error as SQLiteError {
+                // A denied open (e.g. the read-only policy rejecting a missing or
+                // unwritable target) must report failure, like the other read-only
+                // dot-command denials. (Codex review P2, PR #1.)
                 err("Error: \(error.message)\n")
+                exitCode = 1
             } catch {
                 err("Error: \(error)\n")
+                exitCode = 1
             }
 
         case ".read":
@@ -805,7 +1616,7 @@ final class Session {
     /// Reads a SQL/dot-command script through ShellKit's sandbox gate and
     /// runs it.
     func runScript(path: String) async {
-        guard let url = await resolveAuthorized(path) else { exitCode = 1; return }
+        guard let url = await resolveAuthorized(path, boundedRead: true) else { exitCode = 1; return }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
             _ = await process(text, context: .script)
@@ -817,18 +1628,116 @@ final class Session {
 
     /// Converts a user-supplied path to a sandbox URL and asks the host to
     /// authorize it. Returns `nil` (after reporting) if denied.
-    private func resolveAuthorized(_ path: String) async -> URL? {
-        let url = Shell.resolve(path)
+    private func resolveAuthorized(_ path: String, boundedRead: Bool = false) async -> URL? {
+        // Canonicalize before authorizing so the authorized path is the same
+        // symlink-resolved string the file op then uses (see canonicalize()).
+        let url = Sqlite3Executable.canonicalize(Shell.resolve(path))
+        // Reserve the audit log: a file-touching dot-command must not target it,
+        // or an in-band `.output <auditURL>` could overwrite the trusted trail.
+        // Compare by canonical path AND (for existing files) by file identity,
+        // so a hard link / alternate name to the same inode is also caught.
+        // Reject the exact audit path AND a target whose -wal/-shm/-journal
+        // sidecar is the audit log, so `.open`/`.backup`/`.restore` of such a base
+        // can't clobber the trail via a sidecar write (matches the initial-open
+        // reservation). (Codex review P2, PR #1.)
+        if let auditCanonicalPath,
+           Sqlite3Executable.auditCollidesWithDatabase(auditPath: auditCanonicalPath, dbPath: url.path) {
+            err("Error: cannot direct a command at the audit log (or its -wal/-shm/-journal sidecar)\n")
+            exitCode = 1   // make the policy denial observable, like other refusals
+            return nil
+        }
         do {
             try await Shell.authorize(url)
-            return url
         } catch {
             err("Error: \(error)\n")
             return nil
         }
+        // Under a hardened/read-only policy — or any policy with a statementTimeout
+        // — refuse a special file (FIFO/device/socket) at the target: a `.read`/
+        // `.import` of a FIFO with no writer blocks in String(contentsOf:), where the
+        // budget can't interrupt it (mirrors FileAuditSink). New/regular files pass.
+        // (Codex review P2, PR #1.)
+        if policy.hardened || policy.forceReadOnly || policy.statementTimeout != nil,
+           !Sqlite3Executable.isRegularFileOrAbsent(url.path) {
+            err("Error: cannot direct a command at a non-regular file under this policy\n")
+            exitCode = 1
+            return nil
+        }
+        // A whole-file slurp — `.read`/`-init` (runScript) and `.import` load the
+        // file entirely via `String(contentsOf:)` — happens before statementTimeout,
+        // SQLITE_LIMIT_SQL_LENGTH, or the output cap can apply, so an authorized
+        // multi-GB regular file would tie up memory/CPU regardless of the budget.
+        // Under a bounding policy, refuse a file over the input ceiling up front.
+        // (Codex review P2, PR #1.)
+        if boundedRead,
+           policy.hardened || policy.forceReadOnly || policy.statementTimeout != nil {
+            let cap = policy.maxInputBytes ?? SQLitePolicy.defaultInputByteCeiling
+            if let size = Sqlite3Executable.regularFileSize(url.path), size > Int64(cap) {
+                err("Error: cannot read a file larger than \(cap) bytes under this policy\n")
+                exitCode = 1
+                return nil
+            }
+        }
+        return url
+    }
+
+    /// Under a read-only policy, an output redirect (`.output`/`.once`) must not
+    /// target the open database file or its -wal/-shm/-journal sidecars:
+    /// `finishOutput` would overwrite the database outside SQLite, defeating the
+    /// trusted read-only guarantee. Returns true (after reporting) when denied.
+    /// (Codex review P2, PR #1.)
+    private func redirectHitsOpenDatabase(_ url: URL) -> Bool {
+        guard policy.forceReadOnly else { return false }
+        // Check the redirect target against EVERY database file opened read-only
+        // this run — the current one and any since replaced by `.open` — so a file
+        // opened read-only can't be overwritten via a redirect after the shell
+        // switches away from it. Stored paths are already canonical (open-time), so
+        // compare directly. (Codex review P2, PR #1.)
+        let collides = reservedReadOnlyPaths.contains { dbPath in
+            Sqlite3Executable.auditCollidesWithDatabase(auditPath: url.path, dbPath: dbPath)
+        }
+        guard collides else { return false }
+        err("Error: cannot redirect output to a database opened under the read-only policy (or its -wal/-shm/-journal sidecar)\n")
+        exitCode = 1
+        return true
+    }
+
+    /// Reserve a database path (already canonicalized at open time) against output
+    /// redirects for the run, under `forceReadOnly`. (Codex review P2, PR #1.)
+    func reserveReadOnlyPath(_ canonicalPath: String) {
+        guard policy.forceReadOnly else { return }
+        reservedReadOnlyPaths.insert(canonicalPath)
+    }
+
+    /// Re-pin temp_store=MEMORY (hardened only), failing closed if it can't be
+    /// applied — e.g. an in-band `.limit sql_length N` lowered the SQL-length
+    /// limit below this pragma's own length, which would otherwise let a prior
+    /// `temp_store=FILE` leak into the next DB query. Returns true to proceed,
+    /// false (after emitting an error + arming shutdown) to refuse. Called before
+    /// every SQL statement *and* before DB-backed dot-command introspection,
+    /// which `evaluate()`s directly and would otherwise bypass the per-statement
+    /// re-pin. (Codex review P1, PR #1.) The within-chunk case still needs SDK
+    /// SQLITE_TEMP_STORE=3.
+    private func repinTempStoreOrFailClosed() -> Bool {
+        // Re-pin under read-only as well as hardened: forceReadOnly must also keep
+        // temp storage in memory across statements (see applyHardening). (Codex P2.)
+        guard policy.hardened || policy.forceReadOnly else { return true }
+        do {
+            _ = try database.evaluate("PRAGMA temp_store=MEMORY;")
+            return true
+        } catch {
+            err("Error: hardened/read-only policy could not re-pin temp_store=MEMORY; refusing to run\n")
+            exitCode = 1
+            shouldQuit = true
+            return false
+        }
     }
 
     private func introspect(_ body: () throws -> Void) {
+        // DB-backed dot-commands evaluate() directly, bypassing runStatement's
+        // re-pin — so re-pin here too, or a prior temp_store=FILE would apply to
+        // an introspection query's ORDER BY/sort. (Codex review P1, PR #1.)
+        guard repinTempStoreOrFailClosed() else { return }
         do {
             try body()
         } catch let error as SQLiteError {
@@ -863,6 +1772,16 @@ final class Session {
             return
         }
         if args.count >= 2, let newValue = Int32(args[1]) {
+            // `.limit` is another LLM-controlled in-band channel: under a
+            // hardened policy it may show or *lower* a limit, but a raise above
+            // the current value is refused — otherwise `.limit attached 10`
+            // would undo applyHardening()'s SQLITE_LIMIT_ATTACHED=0.
+            if policy.hardened || policy.forceReadOnly, newValue > database.limit(entry.code) {
+                err("Error: cannot raise limit \"\(entry.name)\" under the hardened/read-only policy\n")
+                exitCode = 1
+                show(entry.name, entry.code)
+                return
+            }
             database.limit(entry.code, newValue: newValue)
         }
         show(entry.name, entry.code)
@@ -921,6 +1840,11 @@ final class Session {
                 try database.evaluate("CREATE TABLE IF NOT EXISTS \"\(ident)\"(\n\(cols));")
             }
             for row in data {
+                // The per-row INSERT loop runs inside one dot-command, where the
+                // between-statements budget can't reach; check the deadline here so a
+                // large authorized CSV can't run past statementTimeout. budgetExceeded
+                // reports + arms shutdown once, then we stop. (Codex review P2, PR #1.)
+                if budgetExceeded() { return }
                 let values = row
                     .map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }
                     .joined(separator: ",")
