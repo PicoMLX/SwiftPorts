@@ -3,12 +3,16 @@ name: Swift
 on:
   push:
     branches:
-      - main
-      - 'eval/**'
-      - 'feat/**'
+      - '**'
   pull_request:
     branches:
       - main
+
+# Cancel superseded in-flight runs on the same ref so a fast push
+# loop doesn't pile up runners; the latest commit's run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
