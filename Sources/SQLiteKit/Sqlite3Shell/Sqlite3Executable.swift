@@ -476,6 +476,16 @@ final class Session {
             options: .regularExpression) != nil
     }
 
+    /// True when `sql` is more than one statement: after masking strings/comments
+    /// (so a `;` inside a literal or comment doesn't count) a `;` is followed by
+    /// further non-whitespace. Used to keep EQP from evaluate()-ing — and thus
+    /// executing — the tail of a multi-statement chunk. (Codex review P2, PR #1.)
+    static func hasTrailingStatement(_ sql: String) -> Bool {
+        let masked = strippedForGuards(sql)
+        guard let semi = masked.firstIndex(of: ";") else { return false }
+        return masked[masked.index(after: semi)...].contains { !$0.isWhitespace }
+    }
+
     /// Bound a single audited record's size so an oversized untrusted statement
     /// can't bloat the out-of-DB JSONL trail. (SQLITE_LIMIT_SQL_LENGTH also caps
     /// the SQL, but only at prepare time — after this record is written.)
@@ -728,13 +738,12 @@ final class Session {
         }
         if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
         // Re-pin temp_store=MEMORY before ANY DB-backed work this statement —
-        // including EXPLAIN QUERY PLAN rendering, which evaluate()s the query — so
-        // temp confinement holds across statement boundaries even if an earlier
-        // statement set FILE; fail closed if it can't be applied (see helper). The
-        // within-chunk case is covered by the SDK compile flag SQLITE_TEMP_STORE=3.
-        // (Re-pin precedes EQP per Codex review P2, PR #1.)
+        // including the EXPLAIN QUERY PLAN rendering below, which evaluate()s the
+        // query — so temp confinement holds across statement boundaries even if an
+        // earlier statement set FILE; fail closed if it can't be applied (see
+        // helper). The within-chunk case is covered by the SDK compile flag
+        // SQLITE_TEMP_STORE=3. (Re-pin precedes EQP per Codex review P2, PR #1.)
         if !repinTempStoreOrFailClosed() { return false }
-        if eqp { renderQueryPlan(sql) }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
         // `.open` take. (`-safe` blocks ATTACH outright via its authorizer,
@@ -779,6 +788,12 @@ final class Session {
                 }
             }
         }
+        // EQP rendering runs *after* the ATTACH gate: renderQueryPlan evaluate()s the
+        // statement, and for a multi-statement chunk the EXPLAIN prefix covers only
+        // the first — so the tail (e.g. an ATTACH) would otherwise execute before the
+        // gate could vet it. renderQueryPlan also refuses multi-statement chunks
+        // outright; this ordering is belt-and-suspenders. (Codex review P2, PR #1.)
+        if eqp { renderQueryPlan(sql) }
         do {
             for set in try database.evaluate(sql) {
                 out(formatter.render(set))
@@ -869,6 +884,11 @@ final class Session {
     /// connectors.
     private func renderQueryPlan(_ sql: String) {
         let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+        // EXPLAIN QUERY PLAN prefixes only the first statement; in a multi-statement
+        // chunk every later statement EXECUTES during this evaluate (its side effects
+        // run here — e.g. an ATTACH — and a second time in the real run below). Skip
+        // the plan for such chunks rather than run their tail. (Codex review P2, PR #1.)
+        if Self.hasTrailingStatement(trimmed) { return }
         guard let plan = try? database.evaluate("EXPLAIN QUERY PLAN \(trimmed)").first,
               !plan.rows.isEmpty else { return }
         let nodes: [(id: Int, parent: Int, detail: String)] = plan.rows.compactMap { row in

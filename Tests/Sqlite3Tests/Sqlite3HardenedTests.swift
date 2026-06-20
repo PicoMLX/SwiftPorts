@@ -538,4 +538,34 @@ import Testing
         // Mixed: first literal, second expression — flagged on the second.
         #expect(Session.attachHasNonLiteralTarget("ATTACH 'ok.db' AS a; ATTACH 'x'||'y' AS b"))
     }
+
+    /// Unit-cover the multi-statement detector that stops EQP from evaluate()-ing
+    /// (and thus executing) the tail of a multi-statement chunk. (Codex review P2.)
+    @Test func multiStatementDetection() {
+        // Single statement (with/without trailing `;`, or `;` inside a literal or
+        // comment) — NOT multi.
+        #expect(!Session.hasTrailingStatement("SELECT * FROM t;"))
+        #expect(!Session.hasTrailingStatement("SELECT * FROM t"))
+        #expect(!Session.hasTrailingStatement("SELECT 1;   "))            // trailing whitespace
+        #expect(!Session.hasTrailingStatement("SELECT 'a;b'"))            // `;` inside string
+        #expect(!Session.hasTrailingStatement("SELECT 'a;b';"))           // string `;` + trailing `;`
+        #expect(!Session.hasTrailingStatement("SELECT 1 -- a; b\n"))      // `;` inside line comment
+        #expect(!Session.hasTrailingStatement("SELECT 1; /* tail */"))    // only a comment after `;`
+        // More than one statement — MUST be detected.
+        #expect(Session.hasTrailingStatement("SELECT 1;SELECT 2"))
+        #expect(Session.hasTrailingStatement("SELECT 1; ATTACH '/tmp/a.db' AS aux; CREATE TABLE aux.t(x);"))
+        #expect(Session.hasTrailingStatement("INSERT INTO t VALUES('x;y'); SELECT 1"))
+    }
+
+    /// With `.eqp on`, a multi-statement chunk must NOT have its tail executed by
+    /// the EQP rendering — `EXPLAIN QUERY PLAN` prefixes only the first statement,
+    /// so the old code ran the second INSERT during EQP *and* again in the real run
+    /// (3 rows). It must run once (2 rows). (Codex review P2, PR #1.)
+    @Test func eqpDoesNotExecuteTailOfMultiStatementChunk() async throws {
+        let r = try await run([":memory:"],
+            input: ".eqp on\nCREATE TABLE t(x);\nINSERT INTO t VALUES(1); INSERT INTO t VALUES(2);\nSELECT 'COUNT=' || count(*) FROM t;\n")
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("COUNT=2"))    // both inserts ran exactly once
+        #expect(!r.stdout.contains("COUNT=3"))   // tail not double-executed via EQP
+    }
 }
