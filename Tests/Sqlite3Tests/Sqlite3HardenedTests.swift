@@ -644,6 +644,53 @@ import Testing
         #expect(!String(decoding: bytes, as: UTF8.self).contains("pwned"))
     }
 
+    /// A timeout-only policy must apply the special-file preflight too (a FIFO/
+    /// device target would block where the budget can't interrupt). A directory is
+    /// a non-regular file that doesn't block, so it exercises the preflight: the
+    /// "non-regular file" message proves the preflight fired rather than a later
+    /// read failure. (Codex review P2, PR #1.)
+    @Test func timeoutPolicyRejectsSpecialFileTarget() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-special-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try await run([":memory:"],
+            policy: SQLitePolicy(hardened: false, statementTimeout: 30),
+            input: ".read \(dir.path)\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("non-regular file"))
+    }
+
+    /// A timeout policy must still process ordinary finite stdin (baseline that any
+    /// future bounded-read change must preserve). (Codex review P2, PR #1.)
+    @Test func timeoutPolicyStillProcessesFiniteStdin() async throws {
+        let r = try await run([":memory:"],
+            policy: SQLitePolicy(hardened: false, statementTimeout: 30),
+            input: "SELECT 'okok';\n")
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("okok"))
+    }
+
+    /// A read-only database opened through a symlink is reserved by its *canonical*
+    /// (resolved) path, so a redirect to the real file is refused. (Codex P2, PR #1.)
+    @Test func readOnlyReservesCanonicalPathOfSymlinkedDatabase() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-symlink-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let real = dir.appendingPathComponent("real.db")
+        _ = try await run([real.path], input: "CREATE TABLE t(x);\n")   // a real DB
+        let link = dir.appendingPathComponent("link.db")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        // Open via the symlink read-only, then try to overwrite the real file.
+        let r = try await run([link.path],
+            policy: SQLitePolicy(hardened: false, forceReadOnly: true),
+            input: ".output \(real.path)\n.print pwned\n")
+        #expect(r.exit == 1)
+        let bytes = try Data(contentsOf: real)
+        #expect(!String(decoding: bytes, as: UTF8.self).contains("pwned"))
+    }
+
     /// Unit-cover the statement-boundary ATTACH detector. (Codex review P2, PR #1.)
     @Test func attachStatementDetection() {
         #expect(Session.hasAttachStatement("ATTACH '/a' AS x"))

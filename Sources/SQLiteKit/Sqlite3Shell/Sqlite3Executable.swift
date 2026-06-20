@@ -103,11 +103,12 @@ public enum Sqlite3Executable {
                 return 1
             }
             // Refuse a special file (FIFO/device/socket) as the database under a
-            // hardened/read-only policy: opening it could block before the Session
-            // (and its statementTimeout) exists. (Codex review P2, PR #1.)
-            if policy.hardened || policy.forceReadOnly,
+            // hardened/read-only policy, or any policy with a statementTimeout:
+            // opening it could block before the Session (and its timeout) exists, so
+            // the budget could never fire. (Codex review P2, PR #1.)
+            if policy.hardened || policy.forceReadOnly || policy.statementTimeout != nil,
                !isRegularFileOrAbsent(url.path) {
-                writeError("sqlite3: Error: cannot open a non-regular file as the database under the hardened/read-only policy\n",
+                writeError("sqlite3: Error: cannot open a non-regular file as the database under this policy\n",
                            policy: policy, to: stderr)
                 return 1
             }
@@ -157,6 +158,9 @@ public enum Sqlite3Executable {
             policy: policy,
             audit: audit,
             filename: filename)
+        // Reserve the initial database's canonical path (forceReadOnly) so a redirect
+        // can't overwrite it, even after `.open` switches away. (Codex review P2.)
+        if case .file(let opened) = location { session.reserveReadOnlyPath(opened) }
 
         // -init FILE, then any -cmd commands, before the main input.
         if let initFile = options.initFile {
@@ -336,12 +340,14 @@ final class Session {
     private var formatter: ResultFormatter
     /// The database filename as opened (":memory:" or a path), shown by `.show`.
     private var filename: String
-    /// Under `forceReadOnly`, the as-typed name of every database file opened this
-    /// run (initial open + each `.open`). They stay reserved against output
-    /// redirects for the whole run, even after `.open` switches away — otherwise
-    /// `.open :memory:` would let a redirect overwrite the file just opened
-    /// read-only. (Codex review P2, PR #1.)
-    private var reservedReadOnlyNames: Set<String> = []
+    /// Under `forceReadOnly`, the *canonical* path of every database file opened
+    /// this run (initial open + each `.open`), captured at open time. They stay
+    /// reserved against output redirects for the whole run, even after `.open`
+    /// switches away — otherwise `.open :memory:` would let a redirect overwrite the
+    /// file just opened read-only. Canonical-at-open (not re-resolved later) so a
+    /// symlink retargeted after the open can't move the reservation off the real
+    /// database. (Codex review P2, PR #1.)
+    private var reservedReadOnlyPaths: Set<String> = []
     private let stdout: OutputSink
     private let stderr: OutputSink
     private let interactive: Bool
@@ -411,7 +417,6 @@ final class Session {
         self.auditCanonicalPath = policy.auditURL.map { Sqlite3Executable.canonicalize($0).path }
         self.deadline = policy.statementTimeout.map { Date().addingTimeInterval($0) }
         applyHardening(to: database)
-        reserveIfReadOnly(filename)
     }
 
     /// Apply the hardened-mode runtime controls to a freshly-opened handle:
@@ -1466,7 +1471,10 @@ final class Session {
                 if safeMode { database.enableSafeMode() }
                 applyHardening(to: database)
                 filename = path   // as-typed, matching sqlite3's `.show`
-                reserveIfReadOnly(path)   // keep this read-only DB reserved for the run
+                // Reserve the *canonical* opened path (resolveAuthorized resolved it)
+                // for the run, so it stays protected from redirects even after a
+                // later `.open`. (Codex review P2, PR #1.)
+                if case .file(let opened) = location { reserveReadOnlyPath(opened) }
                 // A redirect set up *before* this `.open` (when the open DB was a
                 // different file or :memory:) may now point at a read-only database —
                 // the one just opened, or an earlier one still reserved.
@@ -1538,12 +1546,14 @@ final class Session {
             err("Error: \(error)\n")
             return nil
         }
-        // Under a hardened/read-only policy, refuse a special file (FIFO/device/
-        // socket) at the target: opening it could block before the Session's
-        // statementTimeout exists (mirrors FileAuditSink). A new/regular file is fine.
-        if policy.hardened || policy.forceReadOnly,
+        // Under a hardened/read-only policy — or any policy with a statementTimeout
+        // — refuse a special file (FIFO/device/socket) at the target: a `.read`/
+        // `.import` of a FIFO with no writer blocks in String(contentsOf:), where the
+        // budget can't interrupt it (mirrors FileAuditSink). New/regular files pass.
+        // (Codex review P2, PR #1.)
+        if policy.hardened || policy.forceReadOnly || policy.statementTimeout != nil,
            !Sqlite3Executable.isRegularFileOrAbsent(url.path) {
-            err("Error: cannot direct a command at a non-regular file under the hardened/read-only policy\n")
+            err("Error: cannot direct a command at a non-regular file under this policy\n")
             exitCode = 1
             return nil
         }
@@ -1560,10 +1570,10 @@ final class Session {
         // Check the redirect target against EVERY database file opened read-only
         // this run — the current one and any since replaced by `.open` — so a file
         // opened read-only can't be overwritten via a redirect after the shell
-        // switches away from it. (Codex review P2, PR #1.)
-        let collides = reservedReadOnlyNames.contains { name in
-            let dbPath = Sqlite3Executable.canonicalize(Shell.resolve(name)).path
-            return Sqlite3Executable.auditCollidesWithDatabase(auditPath: url.path, dbPath: dbPath)
+        // switches away from it. Stored paths are already canonical (open-time), so
+        // compare directly. (Codex review P2, PR #1.)
+        let collides = reservedReadOnlyPaths.contains { dbPath in
+            Sqlite3Executable.auditCollidesWithDatabase(auditPath: url.path, dbPath: dbPath)
         }
         guard collides else { return false }
         err("Error: cannot redirect output to a database opened under the read-only policy (or its -wal/-shm/-journal sidecar)\n")
@@ -1571,13 +1581,11 @@ final class Session {
         return true
     }
 
-    /// Record an opened database path so it stays reserved against output redirects
-    /// for the run (forceReadOnly only; `:memory:`/empty touch no file). Canonical
-    /// comparison is deferred to `redirectHitsOpenDatabase` so this is safe to call
-    /// from `init` before the resolve context is fully wired. (Codex review P2.)
-    private func reserveIfReadOnly(_ name: String) {
-        guard policy.forceReadOnly, name != ":memory:", !name.isEmpty else { return }
-        reservedReadOnlyNames.insert(name)
+    /// Reserve a database path (already canonicalized at open time) against output
+    /// redirects for the run, under `forceReadOnly`. (Codex review P2, PR #1.)
+    func reserveReadOnlyPath(_ canonicalPath: String) {
+        guard policy.forceReadOnly else { return }
+        reservedReadOnlyPaths.insert(canonicalPath)
     }
 
     /// Re-pin temp_store=MEMORY (hardened only), failing closed if it can't be
