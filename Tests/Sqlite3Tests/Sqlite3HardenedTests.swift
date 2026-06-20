@@ -794,6 +794,35 @@ import Testing
         #expect(!r.stdout.contains("ran"))
     }
 
+    /// `-init` runs before the `-cmd`/trailing SQL, so a denied init script must
+    /// also fail the run closed under an active policy: the trailing SQL must not
+    /// run. (Codex review P2, PR #1.)
+    @Test func deniedInitScriptFailsRunClosed() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-init-denied-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let initFile = dir.appendingPathComponent("init.sql")
+        try "VACUUM INTO 'side.db';\n".write(to: initFile, atomically: true, encoding: .utf8)
+        let r = try await run(["-init", initFile.path, ":memory:", "SELECT 'ran';"],
+                              policy: .hardened())
+        #expect(r.exit == 1)
+        #expect(!r.stdout.contains("ran"))
+    }
+
+    /// Permissive policy keeps stock behavior: an init-script error is reported but
+    /// non-fatal, so the trailing SQL still runs.
+    @Test func permissiveInitErrorStillRunsTrailingSql() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-init-ok-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let initFile = dir.appendingPathComponent("init.sql")
+        try "SELECT * FROM nope;\n".write(to: initFile, atomically: true, encoding: .utf8)
+        let r = try await run(["-init", initFile.path, ":memory:", "SELECT 'ran';"])
+        #expect(r.stdout.contains("ran"))
+    }
+
     // MARK: Timeout-bounded backup/restore (Codex review P2, PR #1)
 
     /// A synchronous `.backup` / `.restore` copy can't honor the script budget, so

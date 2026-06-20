@@ -162,24 +162,32 @@ public enum Sqlite3Executable {
         // can't overwrite it, even after `.open` switches away. (Codex review P2.)
         if case .file(let opened) = location { session.reserveReadOnlyPath(opened) }
 
+        // Command-line setup — `-init FILE` then any `-cmd` — runs before the main
+        // input. Under any active policy (or `-bail`), a failed or policy-denied
+        // setup step must fail the whole run closed: skip the remaining setup, the
+        // trailing SQL argument, AND the stdin loop below, so e.g. a denied
+        // `VACUUM INTO …` (in an init file or a `-cmd`) can't be followed by a later
+        // statement running as if setup had succeeded. `requestStop()` arms the
+        // shutdown so the `!shouldQuit` guards below skip everything. The permissive
+        // policy keeps stock sqlite3's continue-on-error (an error there is reported
+        // but non-fatal unless `-bail`). (Codex review P2, PR #1.)
+        let failClosedOnSetupError = policy.hardened || policy.forceReadOnly
+            || policy.statementTimeout != nil || policy.auditURL != nil || options.bail
+
         // -init FILE, then any -cmd commands, before the main input.
         if let initFile = options.initFile {
             await session.runScript(path: initFile)
+            // runScript uses `.script` context, where `process` doesn't return false
+            // on a non-bail denial, so the observable failure signal is a nonzero
+            // exitCode (a policy denial, a SQL error, or an unreadable/denied init
+            // path all set it). exitCode is 0 until here, so any nonzero value is
+            // from the init script.
+            if failClosedOnSetupError, session.exitCode != 0 { session.requestStop() }
         }
-        // `-cmd` arguments are command-line SQL: each bails on its first
-        // error/denial (`process` returns false under `.inline`). Under any active
-        // policy — or with `-bail` — a failed or policy-denied setup command must
-        // fail the whole run closed: not just stop the rest of the -cmd list but
-        // also skip the trailing SQL argument and the stdin loop below, so e.g. a
-        // denied `-cmd "VACUUM INTO …"` can't be followed by a later statement
-        // running as if setup had succeeded. Arm shutdown so the `!shouldQuit`
-        // guards below skip both (just breaking this loop wouldn't). The permissive
-        // policy keeps stock sqlite3's continue-on-error (a `-cmd` error there is
-        // reported but non-fatal unless `-bail`). (Codex review P2, PR #1.)
-        let failClosedOnInlineError = policy.hardened || policy.forceReadOnly
-            || policy.statementTimeout != nil || policy.auditURL != nil || options.bail
         for command in options.commands where !session.shouldQuit {
-            if await session.process(command, context: .inline) == false, failClosedOnInlineError {
+            // `-cmd` is command-line SQL (`.inline`): `process` returns false on the
+            // first error/denial in the chunk. Fail closed the same way as -init.
+            if await session.process(command, context: .inline) == false, failClosedOnSetupError {
                 session.requestStop()
                 break
             }
