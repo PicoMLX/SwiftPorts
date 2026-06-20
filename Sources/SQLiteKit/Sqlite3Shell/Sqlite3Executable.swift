@@ -179,6 +179,16 @@ public enum Sqlite3Executable {
             if options.interactive {
                 await session.runInteractive(stdin: stdin)
             } else {
+                // KNOWN LIMITATION: this batch read is not bounded by statementTimeout.
+                // A stdin pipe that never reaches EOF (a sandboxed/hardened `sqlite3`
+                // with no SQL argument) can block here before `process` gets to check
+                // the budget between statements. Bounding it means racing the read in a
+                // child task, which requires ShellKit's `InputSource` to be `Sendable`
+                // (for the `@Sendable` task capture) and cancellation-aware — neither is
+                // verifiable from this package, so per maintainer decision it's left
+                // documented rather than risk an unverifiable change. The interactive
+                // REPL is refused outright under a timeout for the same reason (see
+                // `runInteractive`). (Codex review P2, PR #1.)
                 let input = await stdin.readAllString()
                 _ = await session.process(input, context: .script)
             }

@@ -41,6 +41,11 @@ working; harden only the escape/DoS boundary.
 - **Attempted-tier audit** (`FileAuditSink`, JSON Lines, `O_NOFOLLOW` + preflight),
   written outside the DB; destination is embedder-set, never an argv path.
 - **Script-budget timeout** (`statementTimeout`) checked between statements.
+  Known limitation: it does not bound a blocking stdin read — a `sqlite3` with no
+  SQL argument reading a pipe that never reaches EOF can still block before the
+  budget is checked. Bounding that needs a cancellation-aware, `Sendable` stdin
+  source (ShellKit's `InputSource`); the interactive REPL is refused outright under
+  a timeout for the same reason.
 
 ## SDK follow-ups (need the `sqlite3*` handle — out of this package)
 
