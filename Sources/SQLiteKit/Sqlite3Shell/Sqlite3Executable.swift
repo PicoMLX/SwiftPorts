@@ -86,13 +86,11 @@ public enum Sqlite3Executable {
             // trail (defeating "audit lives outside the DB").
             if let auditURL = policy.auditURL {
                 let auditPath = canonicalize(auditURL).path
-                // The DB path AND the sidecars SQLite derives from it (-wal, -shm,
-                // -journal) must not be the audit log: opening the DB in WAL mode
-                // (or with a rollback journal) would otherwise have SQLite clobber
-                // the trusted JSONL trail through a sidecar even though the direct
-                // path matched nothing. (Codex review P2, PR #1.)
-                let dbFiles = [url.path, url.path + "-wal", url.path + "-shm", url.path + "-journal"]
-                if dbFiles.contains(where: { $0 == auditPath || sameFile(auditPath, $0) }) {
+                // The DB path and the sidecars SQLite derives from it (-wal/-shm/
+                // -journal) must not be the audit log, or opening the DB (incl. WAL
+                // mode) could clobber the trusted JSONL trail through a sidecar.
+                // (Codex review P2, PR #1.)
+                if auditCollidesWithDatabase(auditPath: auditPath, dbPath: url.path) {
                     writeError("sqlite3: Error: the database path (or its -wal/-shm/-journal sidecar) may not be the audit log\n",
                                policy: policy, to: stderr)
                     return 1
@@ -294,6 +292,16 @@ public enum Sqlite3Executable {
         else { return true }
         return !isDir.boolValue
 #endif
+    }
+
+    /// True if `auditPath` is the database at `dbPath` or one of the sidecar
+    /// files SQLite derives from it (-wal/-shm/-journal). Keeps an in-band
+    /// database open — the initial open *and* `.open`/`.backup`/`.restore` — from
+    /// clobbering the trusted audit trail through a sidecar write (e.g. WAL).
+    /// (Codex review P2, PR #1.)
+    static func auditCollidesWithDatabase(auditPath: String, dbPath: String) -> Bool {
+        let dbFiles = [dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + "-journal"]
+        return dbFiles.contains(where: { $0 == auditPath || sameFile($0, auditPath) })
     }
 }
 
@@ -1275,9 +1283,13 @@ final class Session {
         // or an in-band `.output <auditURL>` could overwrite the trusted trail.
         // Compare by canonical path AND (for existing files) by file identity,
         // so a hard link / alternate name to the same inode is also caught.
+        // Reject the exact audit path AND a target whose -wal/-shm/-journal
+        // sidecar is the audit log, so `.open`/`.backup`/`.restore` of such a base
+        // can't clobber the trail via a sidecar write (matches the initial-open
+        // reservation). (Codex review P2, PR #1.)
         if let auditCanonicalPath,
-           url.path == auditCanonicalPath || Sqlite3Executable.sameFile(url.path, auditCanonicalPath) {
-            err("Error: cannot direct a command at the audit log\n")
+           Sqlite3Executable.auditCollidesWithDatabase(auditPath: auditCanonicalPath, dbPath: url.path) {
+            err("Error: cannot direct a command at the audit log (or its -wal/-shm/-journal sidecar)\n")
             exitCode = 1   // make the policy denial observable, like other refusals
             return nil
         }

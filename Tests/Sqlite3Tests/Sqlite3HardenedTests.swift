@@ -159,7 +159,12 @@ import Testing
         let r = try await run([":memory:", "SELECT 1;"], policy: policy)
         #expect(r.exit == 1)
         #expect(!r.stdout.contains("1"))   // SQL never ran
-        #expect(r.stderr.contains("audit log"))
+        // The failure is audit-related on every platform, but its stage differs:
+        // POSIX rejects the directory at preflight ("cannot open the configured
+        // audit log"), while Windows' FileHandle only fails at the first real
+        // write ("audit write failed; refusing to run unaudited statement"). Both
+        // fail closed; assert on the shared "audit" token, not the exact message.
+        #expect(r.stderr.contains("audit"))
     }
 
     /// A forced read-only policy blocks `.backup` (which would create/write a
