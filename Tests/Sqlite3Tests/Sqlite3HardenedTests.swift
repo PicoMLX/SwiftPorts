@@ -333,4 +333,49 @@ import Testing
         #expect(r.exit == 1)
         #expect(r.stderr.contains("temp_store"))
     }
+
+    /// VACUUM INTO writes a DB file (with its own sidecars) directly, which can't
+    /// be reserved against the audit log or audited; refuse it whenever an audit
+    /// sink is active, even without hardened/read-only. (Codex review P2, PR #1.)
+    @Test func auditActiveRefusesVacuumInto() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-vacuum-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let policy = SQLitePolicy(hardened: false,
+                                  auditURL: dir.appendingPathComponent("trail.jsonl"))
+        let r = try await run([":memory:"], policy: policy, input: "VACUUM INTO 'out.db';\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("VACUUM INTO"))
+    }
+
+    /// `.import` is an in-band database write; a forced read-only policy must
+    /// refuse it up front (like .backup/.restore), not let the swallowed INSERT
+    /// error report success. (Codex review P2, PR #1.)
+    @Test func readOnlyPolicyRefusesImport() async throws {
+        let policy = SQLitePolicy(hardened: false, forceReadOnly: true)
+        let r = try await run([":memory:"], policy: policy, input: ".import data.csv t\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("read-only policy"))
+    }
+
+    /// An ATTACH'd database writes its own -wal/-journal sidecars; a target whose
+    /// sidecar is the audit log must be refused, matching the initial-open and
+    /// dot-command reservations. (Codex review P2, PR #1.)
+    @Test func auditSidecarReservedFromAttachTarget() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-attach-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let base = dir.appendingPathComponent("a.db")
+        // Pre-create the base so canonicalize() resolves it the same way as the
+        // audit sidecar path (avoids a /var->/private/var symlink mismatch on macOS).
+        FileManager.default.createFile(atPath: base.path, contents: nil)
+        let policy = SQLitePolicy(hardened: false,
+                                  auditURL: dir.appendingPathComponent("a.db-journal"))
+        let r = try await run([":memory:"], policy: policy,
+                              input: "ATTACH '\(base.path)' AS aux;\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("audit log"))
+    }
 }

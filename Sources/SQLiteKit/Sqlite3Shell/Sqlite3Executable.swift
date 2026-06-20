@@ -684,8 +684,12 @@ final class Session {
         // it itself, bypassing Shell.authorize and the `.backup` read-only
         // block — and it works even from a read-only source). Refuse it under a
         // hardened or read-only policy, the same class as ATTACH/.backup.
-        if policy.hardened || policy.forceReadOnly, Self.writesViaVacuumInto(sql) {
-            err("Error: VACUUM INTO is not permitted under the hardened/read-only policy\n")
+        // ...and also whenever an audit sink is active: VACUUM INTO writes a DB
+        // file (with its own -wal/-journal sidecars) directly, which can't be
+        // reserved against the audit log or audited. (Codex review P2, PR #1.)
+        if policy.hardened || policy.forceReadOnly || policy.auditURL != nil,
+           Self.writesViaVacuumInto(sql) {
+            err("Error: VACUUM INTO is not permitted under the hardened/read-only/audit policy\n")
             exitCode = 1
             return false
         }
@@ -706,8 +710,19 @@ final class Session {
         if !safeMode, sql.range(of: "attach", options: .caseInsensitive) != nil {
             for target in database.attachTargets(in: sql)
             where !target.isEmpty && target != ":memory:" {
+                let resolved = Sqlite3Executable.canonicalize(Shell.resolve(target))
+                // An ATTACH'd database writes its own -wal/-shm/-journal sidecars;
+                // refuse a target whose path (or a sidecar) is the audit log, the
+                // same reservation the initial open and dot-commands apply.
+                // (Codex review P2, PR #1.)
+                if let auditCanonicalPath,
+                   Sqlite3Executable.auditCollidesWithDatabase(auditPath: auditCanonicalPath, dbPath: resolved.path) {
+                    err("Error: cannot ATTACH a database whose path (or -wal/-shm/-journal sidecar) is the audit log\n")
+                    exitCode = 1
+                    return false
+                }
                 do {
-                    try await Shell.authorize(Sqlite3Executable.canonicalize(Shell.resolve(target)))
+                    try await Shell.authorize(resolved)
                 } catch {
                     err("Error: \(error)\n")
                     exitCode = 1
@@ -1095,6 +1110,16 @@ final class Session {
             redirect = Redirect(url: url, buffer: "", once: true)
 
         case ".import":
+            // `.import` writes rows into the database — an in-band write the
+            // trusted read-only policy must refuse up front (like `.backup`/
+            // `.restore`): otherwise the per-row INSERT error is swallowed inside
+            // `introspect` without setting exitCode, so the run reports success
+            // despite the policy blocking the write. (Codex review P2, PR #1.)
+            if policy.forceReadOnly {
+                err("Error: .import is not permitted under the read-only policy\n")
+                exitCode = 1
+                return
+            }
             guard args.count >= 2 else {
                 err("Error: .import expects FILE and TABLE\n")
                 return
