@@ -874,4 +874,58 @@ import Testing
         let r = try await run([":memory:"], policy: policy, input: ".read \(script.path)\n")
         #expect(r.stdout.contains("ran"))
     }
+
+    // MARK: Audit-record integrity (Codex review P2, PR #1)
+
+    /// Under a real audit sink, a statement too large to record whole must be
+    /// refused, not executed with a truncated trail record — otherwise its tail
+    /// runs without appearing in the audit. (Codex review P2, PR #1.)
+    @Test func oversizedStatementRefusedUnderAudit() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-big-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let policy = SQLitePolicy(hardened: false, auditURL: dir.appendingPathComponent("trail.jsonl"))
+        // One statement larger than the 64 KiB audit-record cap.
+        let big = "SELECT 1 /* " + String(repeating: "x", count: 70 * 1024) + " */;"
+        let r = try await run([":memory:"], policy: policy, input: big + "\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("too large to audit"))
+        #expect(!r.stdout.contains("1"))   // refused before execution
+    }
+
+    /// A statement within the audit cap still runs and is recorded under audit.
+    @Test func normalStatementStillRunsUnderAudit() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-audit-ok-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let policy = SQLitePolicy(hardened: false, auditURL: dir.appendingPathComponent("trail.jsonl"))
+        let r = try await run([":memory:"], policy: policy, input: "SELECT 'okok';\n")
+        #expect(r.stdout.contains("okok"))
+    }
+
+    // MARK: Bounded import/dump under a timeout (Codex review P2, PR #1)
+
+    /// The deadline checks added inside the `.import`/`.dump` loops must not break
+    /// ordinary (fast) use under a timeout-bounded policy. (Codex review P2, PR #1.)
+    @Test func timeoutPolicyStillAllowsImportAndDump() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sqlite-timeout-impdump-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let csv = dir.appendingPathComponent("d.csv")
+        try "1,alice\n2,bob\n".write(to: csv, atomically: true, encoding: .utf8)
+        let policy = SQLitePolicy(hardened: false, statementTimeout: 30)
+        let r = try await run([":memory:"], policy: policy, input: """
+        .mode csv
+        CREATE TABLE t(id,name);
+        .import \(csv.path) t
+        .mode list
+        .dump
+        """)
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("alice"))
+        #expect(r.stdout.contains("INSERT INTO"))
+    }
 }

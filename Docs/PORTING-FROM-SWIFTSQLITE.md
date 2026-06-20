@@ -39,7 +39,10 @@ working; harden only the escape/DoS boundary.
   file-touching dot-commands (`.read/.import/.output/.once/.backup/.restore/.open`).
 - **Policy re-application on `.open`** (not just safe mode).
 - **Attempted-tier audit** (`FileAuditSink`, JSON Lines, `O_NOFOLLOW` + preflight),
-  written outside the DB; destination is embedder-set, never an argv path.
+  written outside the DB; destination is embedder-set, never an argv path. The
+  record is byte-capped (`maxAuditTextBytes`), so a statement/command too large to
+  capture whole is **refused** (fail-closed) rather than executed with a truncated
+  trail entry — the trail can never omit the tail of an action that ran.
 - **Script-budget timeout** (`statementTimeout`) checked between statements.
   Known limitation: it does not bound a blocking stdin read — a `sqlite3` with no
   SQL argument reading a pipe that never reaches EOF can still block before the
@@ -48,7 +51,10 @@ working; harden only the escape/DoS boundary.
   a timeout for the same reason. For the same "can't be interrupted mid-operation"
   reason, **`.backup`/`.restore` are refused under a timeout-bounded policy** — a
   synchronous full-database copy would run past the deadline (a deadline-checked
-  incremental copy needs the SDK's step-wise backup API; see below).
+  incremental copy needs the SDK's step-wise backup API; see below). Long row-wise
+  dot-commands that *do* loop — **`.import` and `.dump`** — instead check the
+  deadline between rows/tables; a single huge table's `SELECT *` still materializes
+  in one `evaluate` (the same SDK-stepping limit the output cap has, follow-up #2).
 - **Input-file cap** (`maxInputBytes`, 64 MiB under the hardened preset): `.read` /
   `-init` / `.import` load a whole file via `String(contentsOf:)` before the budget,
   `SQLITE_LIMIT_SQL_LENGTH`, or the output cap can apply, so under a bounding policy

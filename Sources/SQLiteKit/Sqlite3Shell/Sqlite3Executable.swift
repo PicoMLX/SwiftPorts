@@ -518,6 +518,21 @@ final class Session {
     /// `-bail`), so this just arms the flag. (Codex review P2, PR #1.)
     func requestStop() { shouldQuit = true }
 
+    /// When a real audit sink is active, the JSONL record is byte-capped
+    /// (`maxAuditTextBytes`), so an oversized statement/command would be recorded
+    /// only in part while `runStatement`/`handleDot` execute it in full — its tail
+    /// could act without appearing in the trusted trail. Fail closed: refuse to run
+    /// what can't be recorded whole. No-op without an audit destination (nothing is
+    /// written, so a truncated `cappedAuditText` can't mislead). Returns true (after
+    /// reporting) when the text is too large to audit. (Codex review P2, PR #1.)
+    private func tooLargeToAudit(_ text: String) -> Bool {
+        guard auditCanonicalPath != nil,
+              text.utf8.count > Self.maxAuditTextBytes else { return false }
+        err("Error: input too large to audit in full; refusing to run it under an audit policy\n")
+        exitCode = 1
+        return true
+    }
+
     /// Truncate `s` to at most `limit` UTF-8 bytes at a line boundary, so a
     /// capped CSV/JSON render is cut between rows rather than mid-character.
     private static func truncateToUTF8Bytes(_ s: String, limit: Int) -> String {
@@ -870,9 +885,11 @@ final class Session {
         // statement, not just the main evaluate. Fail closed: if the trail
         // can't be written, refuse the statement. No-op (always true) unless an
         // audit destination was configured by the embedder.
-        if await audit.record(.attempted(
-            kind: "sql",
-            text: Self.cappedAuditText(sql.trimmingCharacters(in: .whitespacesAndNewlines)))) == false {
+        let auditText = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Refuse before recording if the statement can't be captured whole (its
+        // tail would execute but not appear in the trail). (Codex review P2, PR #1.)
+        if tooLargeToAudit(auditText) { return false }
+        if await audit.record(.attempted(kind: "sql", text: Self.cappedAuditText(auditText))) == false {
             err("Error: audit write failed; refusing to run unaudited statement\n")
             exitCode = 1
             shouldQuit = true
@@ -1104,6 +1121,7 @@ final class Session {
         // Attempted-audit: a dot-command is an LLM-controlled in-band action,
         // so it belongs in the trail just like a SQL statement — and fails
         // closed the same way (no audit, no action).
+        if tooLargeToAudit(line) { return }   // refuse if it can't be recorded whole
         if await audit.record(.attempted(kind: "dot", text: Self.cappedAuditText(line))) == false {
             err("Error: audit write failed; refusing unaudited command\n")
             exitCode = 1
@@ -1236,6 +1254,12 @@ final class Session {
                     ORDER BY rowid;
                     """).first?.rows ?? []
                 for t in tables {
+                    // .dump runs inside one dot-command; check the deadline between
+                    // tables (and rows, below) so a large DB can't keep emitting past
+                    // statementTimeout. A single huge table's SELECT still materializes
+                    // in one evaluate (the SDK-stepping limitation the output cap also
+                    // has — see PORTING-FROM-SWIFTSQLITE follow-up). (Codex review P2, PR #1.)
+                    if budgetExceeded() { return }
                     if outputCapped { break }   // stop querying once the cap is hit
                     guard case .text(let name) = t[0], case .text(let createSQL) = t[1] else { continue }
                     out(createSQL + ";\n")
@@ -1257,6 +1281,7 @@ final class Session {
                         : cols.map { SQLiteDatabase.quoteIdentifier($0) }.joined(separator: ",")
                     let rows = try database.evaluate("SELECT \(selectList) FROM \(ident);").first?.rows ?? []
                     for row in rows {
+                        if budgetExceeded() { return }   // deadline between rows
                         if outputCapped { break }
                         out("INSERT INTO \(ident) VALUES(\(row.map(\.sqlLiteral).joined(separator: ",")));\n")
                     }
@@ -1815,6 +1840,11 @@ final class Session {
                 try database.evaluate("CREATE TABLE IF NOT EXISTS \"\(ident)\"(\n\(cols));")
             }
             for row in data {
+                // The per-row INSERT loop runs inside one dot-command, where the
+                // between-statements budget can't reach; check the deadline here so a
+                // large authorized CSV can't run past statementTimeout. budgetExceeded
+                // reports + arms shutdown once, then we stop. (Codex review P2, PR #1.)
+                if budgetExceeded() { return }
                 let values = row
                     .map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }
                     .joined(separator: ",")
