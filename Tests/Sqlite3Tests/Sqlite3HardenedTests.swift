@@ -316,4 +316,16 @@ import Testing
         #expect(r.exit == 1)
         #expect(r.stderr.contains("temp_store"))
     }
+
+    /// The re-pin/fail-closed must also cover DB-backed dot-commands, which
+    /// `evaluate()` directly (bypassing runStatement). A starved sql_length that
+    /// defeats the re-pin must fail closed before `.indexes` introspection runs,
+    /// not let it execute with a prior `temp_store=FILE`. (Codex review P1, PR #1.)
+    @Test func hardenedFailsClosedOnDotCommandWhenRepinStarved() async throws {
+        let r = try await run(
+            [":memory:"], policy: .hardened(),
+            input: "PRAGMA temp_store=FILE;\n.limit sql_length 10\n.indexes\n")
+        #expect(r.exit == 1)
+        #expect(r.stderr.contains("temp_store"))
+    }
 }

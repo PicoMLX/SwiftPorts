@@ -86,8 +86,15 @@ public enum Sqlite3Executable {
             // trail (defeating "audit lives outside the DB").
             if let auditURL = policy.auditURL {
                 let auditPath = canonicalize(auditURL).path
-                if auditPath == url.path || sameFile(auditPath, url.path) {
-                    writeError("sqlite3: Error: the database path may not be the audit log\n", policy: policy, to: stderr)
+                // The DB path AND the sidecars SQLite derives from it (-wal, -shm,
+                // -journal) must not be the audit log: opening the DB in WAL mode
+                // (or with a rollback journal) would otherwise have SQLite clobber
+                // the trusted JSONL trail through a sidecar even though the direct
+                // path matched nothing. (Codex review P2, PR #1.)
+                let dbFiles = [url.path, url.path + "-wal", url.path + "-shm", url.path + "-journal"]
+                if dbFiles.contains(where: { $0 == auditPath || sameFile(auditPath, $0) }) {
+                    writeError("sqlite3: Error: the database path (or its -wal/-shm/-journal sidecar) may not be the audit log\n",
+                               policy: policy, to: stderr)
                     return 1
                 }
             }
@@ -676,26 +683,11 @@ final class Session {
         }
         if echo { out(sql.trimmingCharacters(in: .whitespacesAndNewlines) + "\n") }
         if eqp { renderQueryPlan(sql) }
-        // Re-pin temp_store=MEMORY before each statement: even if an earlier
-        // statement set it to FILE, the next one is forced back to MEMORY, so
-        // temp confinement holds across statement boundaries. (The within-chunk
-        // case — temp_store=FILE and a spilling query in one evaluate() — is
-        // covered by the SDK compile flag SQLITE_TEMP_STORE=3.)
-        if policy.hardened {
-            do {
-                _ = try database.evaluate("PRAGMA temp_store=MEMORY;")
-            } catch {
-                // Fail closed: if the re-pin can't be applied — e.g. an in-band
-                // `.limit sql_length N` lowered the SQL-length limit below this
-                // pragma's length — a later statement could run with a
-                // previously-set temp_store=FILE, silently losing temp
-                // confinement. Refuse rather than proceed. (Codex review P1, PR #1.)
-                err("Error: hardened policy could not re-pin temp_store=MEMORY; refusing to run further statements\n")
-                exitCode = 1
-                shouldQuit = true
-                return false
-            }
-        }
+        // Re-pin temp_store=MEMORY before each statement so temp confinement
+        // holds across statement boundaries even if an earlier statement set
+        // FILE; fail closed if it can't be applied (see helper). (The within-chunk
+        // case is covered by the SDK compile flag SQLITE_TEMP_STORE=3.)
+        if !repinTempStoreOrFailClosed() { return false }
         // Gate any ATTACH'd file through the host sandbox before SQLite opens
         // it — the same resolve/authorize path the db file and `.read` /
         // `.open` take. (`-safe` blocks ATTACH outright via its authorizer,
@@ -1307,7 +1299,33 @@ final class Session {
         return url
     }
 
+    /// Re-pin temp_store=MEMORY (hardened only), failing closed if it can't be
+    /// applied — e.g. an in-band `.limit sql_length N` lowered the SQL-length
+    /// limit below this pragma's own length, which would otherwise let a prior
+    /// `temp_store=FILE` leak into the next DB query. Returns true to proceed,
+    /// false (after emitting an error + arming shutdown) to refuse. Called before
+    /// every SQL statement *and* before DB-backed dot-command introspection,
+    /// which `evaluate()`s directly and would otherwise bypass the per-statement
+    /// re-pin. (Codex review P1, PR #1.) The within-chunk case still needs SDK
+    /// SQLITE_TEMP_STORE=3.
+    private func repinTempStoreOrFailClosed() -> Bool {
+        guard policy.hardened else { return true }
+        do {
+            _ = try database.evaluate("PRAGMA temp_store=MEMORY;")
+            return true
+        } catch {
+            err("Error: hardened policy could not re-pin temp_store=MEMORY; refusing to run\n")
+            exitCode = 1
+            shouldQuit = true
+            return false
+        }
+    }
+
     private func introspect(_ body: () throws -> Void) {
+        // DB-backed dot-commands evaluate() directly, bypassing runStatement's
+        // re-pin — so re-pin here too, or a prior temp_store=FILE would apply to
+        // an introspection query's ORDER BY/sort. (Codex review P1, PR #1.)
+        guard repinTempStoreOrFailClosed() else { return }
         do {
             try body()
         } catch let error as SQLiteError {
